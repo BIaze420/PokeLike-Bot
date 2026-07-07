@@ -59,6 +59,26 @@ If an installer is provided, download:
 
 - `PokeLikeBotSetup.exe`
 
+## First Run Login
+
+PokeLike Bot uses its own Selenium Chrome profile. It does not use or ship your normal Chrome cookies.
+
+The first time you run the bot:
+
+1. Open PokeLike Bot.
+2. Click `Open Browser`.
+3. Log in to PokeLike inside the browser window opened by the bot.
+4. Complete any cookie/consent prompts if they appear.
+5. After you are logged in, choose your mode/settings in the bot and click `Start Bot`.
+
+The packaged app stores its own login/session data locally under:
+
+```text
+%LOCALAPPDATA%\PokeLike Bot\selenium-profile
+```
+
+That folder is created on the user's computer after running the app. It is not included in this repository or in the release source code.
+
 ## Running From Source
 
 ```powershell

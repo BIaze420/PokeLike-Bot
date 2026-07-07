@@ -34,6 +34,10 @@ If available, download the installer:
 
 - `PokeLikeBotSetup.exe`
 
+## First Run
+
+On first launch, click `Open Browser` inside PokeLike Bot and log in to PokeLike in that bot-controlled browser window. The app uses its own local Selenium profile and does not ship personal Chrome cookies.
+
 ## Notes
 
 This is an unofficial community automation tool for PokeLike. It is free to download and use. Use it responsibly and at your own risk.
