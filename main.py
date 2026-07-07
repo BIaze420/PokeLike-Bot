@@ -3241,7 +3241,11 @@ class PokeLikeBotGUI(ctk.CTk):
             };
             const kindFor = (href, html) => {
                 const text = `${href || ''} ${html || ''}`.toLowerCase();
-                if (text.includes('legendary')) return 'legendary';
+                // Legendary encounters use a MASTER BALL node sprite (instead of
+                // the normal pokeball). Match masterball / master-ball / master_ball
+                // so these get top routing priority instead of falling through to
+                // 'other' (which the bot deprioritizes and walks past).
+                if (text.includes('legendary') || /master.?ball/.test(text)) return 'legendary';
                 if (text.includes('move-tutor')) return 'move-tutor';
                 if (text.includes('pokeball')) return 'pokeball';
                 if (text.includes('grass')) return 'grass';
