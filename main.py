@@ -1264,6 +1264,21 @@ class PokeLikeBotGUI(ctk.CTk):
                 return {clicked: false, total: 0, dexTotal: 0, names: [], skippedForItems: true};
             }
             const wanted = arguments[0].toLowerCase();
+            const active = document.querySelector('.screen.active');
+            const roots = [
+                active?.id === 'starter-screen' ? active : null,
+                document.querySelector('#starter-choices'),
+                document.querySelector('#shiny-content')
+            ].filter(Boolean);
+            const visible = (el) => {
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const wantedNorm = normalize(wanted);
             const clickCenter = (el) => {
                 el.scrollIntoView({block: 'center', inline: 'center'});
                 const rect = el.getBoundingClientRect();
@@ -1297,16 +1312,15 @@ class PokeLikeBotGUI(ctk.CTk):
                 }
                 if (typeof el.click === 'function') el.click();
             };
-            const cards = [...document.querySelectorAll([
+            const selector = [
                 '.dex-grid .dex-card',
                 '.dex-card',
-                '#shiny-content .dex-card',
-                '#shiny-content [role="button"]',
-                '#starter-choices .poke-card',
                 '.poke-card',
                 '[role="button"]'
-            ].join(','))];
-            const dexTotal = document.querySelectorAll('.dex-grid .dex-card, #shiny-content .dex-card, .dex-card').length;
+            ].join(',');
+            const cards = [...new Set(roots.flatMap(root => [...root.querySelectorAll(selector)]))]
+                .filter(visible);
+            const dexTotal = cards.filter(card => card.matches('.dex-card, .poke-card')).length;
             const seen = cards.map(card => ({
                 text: (card.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 60),
                 name: (card.querySelector('.dex-name, .poke-name')?.innerText || '').trim(),
@@ -1316,18 +1330,19 @@ class PokeLikeBotGUI(ctk.CTk):
                     || (card.querySelector('img')?.src || '').includes('/shiny/')
             }));
             const matchesName = (card) => {
-                const name = (card.querySelector('.dex-name, .poke-name')?.innerText || '').trim().toLowerCase();
-                const alt = (card.querySelector('img[alt]')?.getAttribute('alt') || '').trim().toLowerCase();
-                const text = (card.innerText || '').toLowerCase();
-                return name === wanted || alt === wanted || text.includes(wanted);
+                const name = normalize(card.querySelector('.dex-name, .poke-name')?.innerText || '');
+                const alt = normalize(card.querySelector('img[alt]')?.getAttribute('alt') || '');
+                const text = normalize(card.innerText || '');
+                return name === wantedNorm || alt === wantedNorm || text.split(' ').includes(wantedNorm);
             };
             const isShiny = (card) => card.classList.contains('pc-dex-card--shiny')
                 || !!card.querySelector('.pc-shiny-star')
                 || (card.querySelector('img')?.src || '').includes('/shiny/');
             let card = cards.find(card => isShiny(card) && matchesName(card));
             if (!card) {
-                const img = [...document.querySelectorAll('.dex-grid img[alt], #shiny-content img[alt]')]
-                    .find(img => (img.getAttribute('alt') || '').trim().toLowerCase() === wanted);
+                const img = [...new Set(roots.flatMap(root => [...root.querySelectorAll('.dex-grid img[alt], img[alt]')]))]
+                    .filter(visible)
+                    .find(img => normalize(img.getAttribute('alt') || '') === wantedNorm);
                 card = img ? img.closest('.dex-card, .poke-card, [role="button"]') : null;
             }
             if (!card) card = cards.find(matchesName);
@@ -1917,6 +1932,8 @@ class PokeLikeBotGUI(ctk.CTk):
 
             generic_clicked = self.driver.execute_script(
                 """
+                const active = document.querySelector('.screen.active');
+                if (active && active.id === 'starter-screen') return false;
                 const clickCenter = (el) => {
                     el.scrollIntoView({block: 'center', inline: 'center'});
                     const rect = el.getBoundingClientRect();
