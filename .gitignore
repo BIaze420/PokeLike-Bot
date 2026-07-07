@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
+env/
+build/
+dist/
+*.spec.bak
+*.log
+PokeLikeBotInstaller/
+pokelike_settings.json
+unknown_starting_items.json
+.DS_Store
+Thumbs.db

@@ -1,0 +1,5 @@
+customtkinter>=5.2.2
+Pillow>=10.0.0
+selenium>=4.20.0
+webdriver-manager>=4.0.0
+pyinstaller>=6.0.0
