@@ -2802,6 +2802,24 @@ class PokeLikeBotGUI(ctk.CTk):
                 || titleText.includes('choose a evolution')
                 || titleText.includes('evolution variant')
                 || titleText.includes('evolution:');
+            // Guard: the shiny/catch/item/etc. reward screens also contain
+            // clickable .poke-card / .dex-card sprites, which the inline heuristic
+            // (hasInlineChoices) would otherwise mistake for an evolution choice
+            // and click — stalling the run on e.g. the "A Shiny Pokemon appeared"
+            // screen. A real evolution is ALWAYS shown via the fixed overlays
+            // (#evo-overlay / #eevee-choice-overlay) or explicit evolution text,
+            // never inside an active .screen. So on those screens, only trust a
+            // visible evolution overlay or evolution text.
+            const activeScreen = document.querySelector('.screen.active');
+            const activeId = activeScreen ? activeScreen.id : '';
+            const NON_EVO_SCREENS = [
+                'shiny-screen', 'catch-screen', 'item-screen', 'passive-screen',
+                'swap-screen', 'trade-screen', 'stat-buff-screen', 'badge-screen',
+                'starter-screen', 'elite-prep-screen', 'gameover-screen', 'win-screen'
+            ];
+            if (NON_EVO_SCREENS.includes(activeId) && !hasVisibleRoot && !hasEvolutionText) {
+                return {clicked: false};
+            }
             if (!hasVisibleRoot && !hasEvolutionText && !hasInlineChoices) {
                 return {clicked: false};
             }

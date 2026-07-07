@@ -10,6 +10,7 @@ dist/
 *.spec.bak
 *.log
 PokeLikeBotInstaller/
+selenium-profile/
 pokelike_settings.json
 unknown_starting_items.json
 .DS_Store
