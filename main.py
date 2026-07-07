@@ -2707,16 +2707,42 @@ class PokeLikeBotGUI(ctk.CTk):
                 '.evolution-choices'
             ].map(selector => document.querySelector(selector)).filter(Boolean);
             const hasVisibleRoot = choiceRoots.some(visible);
+            const inlineEvolutionCandidates = [...document.querySelectorAll('img[src*="/pokemon/"]')]
+                .map(img => {
+                    let el = img.parentElement;
+                    while (el && el !== document.body && el !== document.documentElement) {
+                        if (el.closest('#team-hover-card, #item-bar, #team-bar, .team-slot, .battle-poke-item')) {
+                            return null;
+                        }
+                        const style = getComputedStyle(el);
+                        const sprites = el.querySelectorAll('img[src*="/pokemon/"]').length;
+                        const text = (el.innerText || el.textContent || '').trim();
+                        const rect = el.getBoundingClientRect();
+                        const isPointerCard = style.cursor === 'pointer'
+                            && sprites === 1
+                            && text
+                            && rect.width >= 80
+                            && rect.height >= 80;
+                        const isKnownEvolutionCard = el.matches('.dex-card, .poke-card, .evo-choice, .evolution-choice, .evo-card, .evolution-card, .evo-option, .evolution-option, [data-evolution], [data-evo], [role="button"]');
+                        if (visible(el) && (isPointerCard || isKnownEvolutionCard)) {
+                            return el;
+                        }
+                        el = el.parentElement;
+                    }
+                    return null;
+                })
+                .filter(Boolean);
+            const hasInlineChoices = inlineEvolutionCandidates.length > 0;
             const hasEvolutionText = titleText.includes('choose its evolution')
                 || titleText.includes('choose evolution')
                 || titleText.includes('choose an evolution')
                 || titleText.includes('choose a evolution')
                 || titleText.includes('evolution variant')
                 || titleText.includes('evolution:');
-            if (!hasVisibleRoot && !hasEvolutionText) {
+            if (!hasVisibleRoot && !hasEvolutionText && !hasInlineChoices) {
                 return {clicked: false};
             }
-            const root = choiceRoots.find(visible) || document.querySelector('.screen.active') || document;
+            const root = choiceRoots.find(visible) || document.querySelector('.screen.active') || document.body || document;
             const selectors = [
                 '#eevee-choices [role="button"]',
                 '#eevee-choices button',
@@ -2764,7 +2790,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     return img.parentElement;
                 })
                 .filter(Boolean);
-            const candidates = [...new Set([...explicitCandidates, ...spriteCandidates])]
+            const candidates = [...new Set([...explicitCandidates, ...spriteCandidates, ...inlineEvolutionCandidates])]
                 .filter(visible)
                 .filter(el => {
                     const text = (el.innerText || el.textContent || '').trim().toLowerCase();
@@ -2800,11 +2826,15 @@ class PokeLikeBotGUI(ctk.CTk):
             const y = rect.top + rect.height / 2;
             const target = document.elementFromPoint(x, y) || card;
             for (const el of [target, card]) {
-                el.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                if (typeof PointerEvent === 'function') {
+                    el.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                }
                 el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: x, clientY: y}));
                 el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: x, clientY: y}));
                 el.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                if (typeof PointerEvent === 'function') {
+                    el.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                }
             }
             if (typeof card.click === 'function') card.click();
             return {clicked: true, name};
