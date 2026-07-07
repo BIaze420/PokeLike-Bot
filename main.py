@@ -2604,6 +2604,22 @@ class PokeLikeBotGUI(ctk.CTk):
                 if (normText.includes('legendary') || String(src || '').toLowerCase().includes('legendary')) return true;
                 return [...legendaryNames].some(legendary => normName === legendary || normText.includes(legendary));
             };
+            const active = document.querySelector('.screen.active') || document;
+            const addButton = [...active.querySelectorAll('#swap-choices button, #swap-choices [role="button"], button, [role="button"]')]
+                .filter(visible)
+                .find(btn => {
+                    const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                    return text.includes('add ') && text.includes(' to team');
+                });
+            if (addButton) {
+                addButton.scrollIntoView({block: 'center', inline: 'center'});
+                addButton.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                addButton.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                addButton.click();
+                addButton.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                addButton.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                return {clicked: true, addClicked: true, text: (addButton.innerText || addButton.textContent || '').trim(), policy};
+            }
             const selectors = [
                 '.screen.active .team-slot',
                 '.screen.active .poke-card',
@@ -2672,6 +2688,10 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         if not result.get("clicked"):
             return False
+        if result.get("addClicked"):
+            self.log(f"Team replace: clicked {result.get('text') or 'Add to team'}.")
+            time.sleep(0.6)
+            return True
         self.pending_team_replace = False
         self.pending_replace_allow_any = False
         self.pending_replace_policy = "default"
