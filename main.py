@@ -16,6 +16,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
@@ -57,6 +58,38 @@ STARTING_ITEM_PRIORITY = (
     "wise glasses",
 )
 REGULAR_ITEM_PRIORITY = ("lucky egg", "leftovers", "shell bell", "dragon fang", "rare candy", "tm")
+# Master list of every passive item the bot recognizes. Any offered passive whose
+# name is NOT in here (and not in the user's priority/ignore lists) is treated as
+# unrecognized: it is recorded to unknown_starting_items.json AND auto-added to the
+# "don't pick up" set so the bot never selects an item it doesn't understand.
+KNOWN_PASSIVE_ITEMS = (
+    "adrenaline orb", "air balloon", "aspear berry", "babiri berry", "big mushroom",
+    "big root", "binding band", "black belt", "black sludge", "body plate",
+    "bright powder", "casteliacone", "cell battery", "charti berry", "chilan berry",
+    "chople berry", "cleanse tag", "coba berry", "colbur berry", "comet shard",
+    "custap berry", "damp rock", "dark stone", "destiny knot", "draco plate",
+    "dragon fang", "dragon scale", "dread plate", "earth plate", "eject button",
+    "eject pack", "electirizer", "electric seed", "everstone", "fist plate",
+    "flame plate", "float stone", "focus band", "focus sash", "grassy seed",
+    "haban berry", "hard stone", "hazard lens", "heat rock", "hp up", "icy rock",
+    "insect plate", "iron ball", "iron plate", "iron thorns", "kasib berry",
+    "kebia berry", "lagging tail", "lansat berry", "lead sparkle", "leaf stone",
+    "legend aegis", "legend lure", "legend might", "legend s call", "life orb",
+    "light clay", "lucky punch", "lum berry", "luminous moss", "macho brace",
+    "magmarizer", "metal alloy", "metal coat", "metal powder", "mind plate",
+    "mirror herb", "misty seed", "muscle band", "mystic water", "never melt ice",
+    "occa berry", "oran berry", "pecha berry", "pink bow", "pixie plate",
+    "poison barb", "power bracer", "power lens", "pretty feather", "pretty wing",
+    "protective pads", "protector", "pure incense", "quick claw", "quick powder",
+    "razor claw", "razor fang", "reaper cloth", "resonance", "revival herb",
+    "ring target", "rock incense", "rocky helmet", "roseli berry", "sea incense",
+    "shed shell", "shiny guard", "shiny hunter", "shiny power", "shoal salt",
+    "shuca berry", "silver powder", "sitrus berry", "sky plate", "smoke ball",
+    "smooth rock", "snowball", "soft sand", "soothe bell", "spooky plate",
+    "star piece", "stardust", "stealth goggles", "sticky barb", "tanga berry",
+    "tiny mushroom", "toxic orb", "toxic plate", "wacan berry", "weakness policy",
+    "wise glasses", "yache berry",
+)
 CONSUMABLE_ITEM_ALIASES = ("rare candy", "tm")
 MAIN_MOVE_TARGET_USES = 2
 LEGENDARY_POKEMON_NAMES = {
@@ -2292,6 +2325,12 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         if result.get("clicked"):
             self.log(f"Shiny reward: {result.get('text') or 'Take shiny Pokemon'}")
+            # This is always a shiny (#btn-take-shiny). Count it. Only reached if
+            # handle_pokemon_reward_policy did not already take/count it this pass,
+            # so there is no double count.
+            with self.stats_lock:
+                self.total_shinies_seen += 1
+            self.update_stats_labels()
             time.sleep(0.6)
             return True
         return False
@@ -2601,6 +2640,15 @@ class PokeLikeBotGUI(ctk.CTk):
                 else:
                     self.pending_replace_policy = "shiny" if result.get("rewardShiny") else "default"
             self.log(f"Pokemon reward: {result.get('text') or 'Take this Pokemon'}")
+            # Count shinies obtained from the dedicated "A Shiny appeared!" /
+            # take-reward screen. The catch-screen path counts via
+            # record_catch_scan; this screen never goes through it, so without
+            # this the shiny tally under-counts. (This handler runs before
+            # handle_take_shiny_reward and short-circuits it, so no double count.)
+            if result.get("rewardShiny"):
+                with self.stats_lock:
+                    self.total_shinies_seen += 1
+                self.update_stats_labels()
         time.sleep(0.6)
         return True
 
@@ -2679,7 +2727,11 @@ class PokeLikeBotGUI(ctk.CTk):
             }
             let selected = null;
             if (policy === 'legendary' || policy === 'legendary_shiny') {
+                // A non-shiny legendary only ever releases a non-shiny, non-legendary
+                // Pokémon — never sacrifice a shiny for a non-shiny legendary. If the
+                // whole team is shiny, selected stays null -> keep team as-is.
                 selected = candidates.find(candidate => !candidate.shiny && !candidate.legendary);
+                // A SHINY legendary may release a shiny (shiny-for-shiny), keeping slot 0.
                 if (!selected && policy === 'legendary_shiny') {
                     selected = candidates.find(candidate => candidate.index > 0 && candidate.shiny && !candidate.legendary);
                 }
@@ -2905,42 +2957,46 @@ class PokeLikeBotGUI(ctk.CTk):
                 || card.textContent
                 || 'evolution'
             ).trim().replace(/\\s+/g, ' ').slice(0, 80);
+            // Tag the chosen card and let Python click it NATIVELY. The evolution
+            // options are dynamically-created divs whose click handler needs a
+            // real, trusted pointer (JS-dispatched MouseEvents are isTrusted:false
+            // and don't move the OS cursor, which is why the overlay only cleared
+            // when the user physically moved the mouse in). A Selenium ActionChains
+            // move+click sends a genuine hover+click that the handler accepts.
+            card.setAttribute('data-bot-evo-target', '1');
             card.scrollIntoView({block: 'center', inline: 'center'});
-            const rect = card.getBoundingClientRect();
-            const x = rect.left + rect.width / 2;
-            const y = rect.top + rect.height / 2;
-            const target = document.elementFromPoint(x, y) || card;
-            for (const el of [target, card]) {
-                // Hover first: the evolution cards are dynamically-created divs
-                // whose click handler only fires once the card is "hovered"
-                // (they change border/background on hover). A real mouse entering
-                // the window sends these events — the synthetic click alone did
-                // not, which is why the overlay only cleared when the user moved
-                // the mouse in. Fire the full hover sequence before pressing.
-                if (typeof PointerEvent === 'function') {
-                    el.dispatchEvent(new PointerEvent('pointerover', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
-                    el.dispatchEvent(new PointerEvent('pointerenter', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
-                    el.dispatchEvent(new PointerEvent('pointermove', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
-                }
-                el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: x, clientY: y}));
-                if (typeof PointerEvent === 'function') {
-                    el.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
-                }
-                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: x, clientY: y}));
-                if (typeof PointerEvent === 'function') {
-                    el.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
-                }
-            }
-            if (typeof card.click === 'function') card.click();
-            return {clicked: true, name};
+            return {found: true, name};
             """
         )
-        if result.get("clicked"):
-            self.log(f"Evolution choice: selected {result.get('name') or 'random option'}.")
+        if not result.get("found"):
+            return False
+        name = result.get("name") or "random option"
+        clicked = False
+        try:
+            el = self.driver.find_element(By.CSS_SELECTOR, '[data-bot-evo-target="1"]')
+            ActionChains(self.driver).move_to_element(el).pause(0.05).click().perform()
+            clicked = True
+        except Exception as exc:
+            self.log(f"Evolution choice: native click failed ({exc}); trying fallback.")
+            try:
+                self.driver.execute_script(
+                    "const el=document.querySelector('[data-bot-evo-target=\"1\"]');"
+                    "if(el){el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));"
+                    "el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));"
+                    "el.click();}"
+                )
+                clicked = True
+            except Exception:
+                clicked = False
+        finally:
+            try:
+                self.driver.execute_script(
+                    "document.querySelector('[data-bot-evo-target=\"1\"]')?.removeAttribute('data-bot-evo-target');"
+                )
+            except Exception:
+                pass
+        if clicked:
+            self.log(f"Evolution choice: selected {name}.")
             time.sleep(0.6)
             return True
         return False
@@ -3050,13 +3106,25 @@ class PokeLikeBotGUI(ctk.CTk):
                 || !!card.querySelector('.starting-item-lock')
                 || card.getAttribute('aria-disabled') === 'true'
                 || card.getAttribute('disabled') !== null;
-            const nameFor = (card) => [
-                card.querySelector('.item-name')?.innerText || '',
-                card.querySelector('img[alt]')?.getAttribute('alt') || '',
-                card.querySelector('img[title]')?.getAttribute('title') || '',
-                card.innerText || ''
-            ].join(' ').trim();
+            // Use ONLY the item name (the label / sprite alt), never the full
+            // card innerText — otherwise the name gets concatenated with the
+            // description (e.g. "black belt black belt 35 atk 35 def passive"),
+            // which polluted the unknown-items list and broke name matching.
+            const nameFor = (card) => (
+                card.querySelector('.item-name')?.innerText
+                || card.querySelector('img[alt]')?.getAttribute('alt')
+                || card.querySelector('img[title]')?.getAttribute('title')
+                || ''
+            ).trim();
             const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const known = (arguments[4] || []).map(name => name.toLowerCase());
+            const isRecognized = (card) => {
+                const norm = normalize(nameFor(card));
+                if (!norm) return false;
+                return priority.some(a => norm.includes(a))
+                    || ignored.some(a => norm.includes(a))
+                    || known.some(a => norm.includes(a));
+            };
             const ignoredMatches = (card) => {
                 const norm = normalize(nameFor(card));
                 return ignored.some(alias => norm.includes(alias));
@@ -3065,7 +3133,13 @@ class PokeLikeBotGUI(ctk.CTk):
             const ignoredNames = visibleCards
                 .filter(ignoredMatches)
                 .map(card => nameFor(card).replace(/\\s+/g, ' ').slice(0, 80));
-            const cards = visibleCards.filter(card => !ignoredMatches(card));
+            // Unrecognized = not ignored, but also not in priority/known/ignore.
+            // These are brand-new items the bot doesn't understand: report them so
+            // Python can record + auto-ignore, and never pick them here.
+            const unrecognizedNames = visibleCards
+                .filter(card => !ignoredMatches(card) && !isRecognized(card))
+                .map(card => nameFor(card).replace(/\\s+/g, ' ').slice(0, 80));
+            const cards = visibleCards.filter(card => !ignoredMatches(card) && isRecognized(card));
             const clickCard = (card) => {
                 card.scrollIntoView({block: 'center', inline: 'center'});
                 const rect = card.getBoundingClientRect();
@@ -3097,9 +3171,9 @@ class PokeLikeBotGUI(ctk.CTk):
                 if (target) {
                     const selectedName = nameFor(target) || (target.innerText || '').trim();
                     clickCard(target);
-                    return {clicked: true, target: true, fallback: false, name: selectedName.replace(/\\s+/g, ' ').slice(0, 80), names, ignoredNames};
+                    return {clicked: true, target: true, fallback: false, name: selectedName.replace(/\\s+/g, ' ').slice(0, 80), names, ignoredNames, unrecognizedNames};
                 }
-                return {clicked: false, target: false, names, ignoredNames};
+                return {clicked: false, target: false, names, ignoredNames, unrecognizedNames};
             }
 
             const ranked = cards
@@ -3113,7 +3187,14 @@ class PokeLikeBotGUI(ctk.CTk):
                     .find(el => isVisible(el) && !isLocked(el));
                 fallback = true;
             }
-            if (!card) return {clicked: false, name: '', names, ignoredNames};
+            if (!card) {
+                // Nothing pickable (all offered items are unrecognized/ignored):
+                // skip the screen rather than picking an unknown item.
+                const skip = [...document.querySelectorAll('#passive-choices .choice-skip-cell, .choice-skip-btn, #passive-choices button')]
+                    .find(el => isVisible(el) && /skip/i.test(el.innerText || el.textContent || ''));
+                if (skip) { clickCard(skip); return {clicked: true, skipped: true, name: 'skip', names, ignoredNames, unrecognizedNames}; }
+                return {clicked: false, name: '', names, ignoredNames, unrecognizedNames};
+            }
             const selectedName = nameFor(card) || (card.innerText || '').trim();
             clickCard(card);
             return {
@@ -3123,25 +3204,37 @@ class PokeLikeBotGUI(ctk.CTk):
                 priority: ranked.length ? ranked[0].priority : null,
                 name: selectedName.replace(/\\s+/g, ' ').slice(0, 80),
                 names,
-                ignoredNames
+                ignoredNames,
+                unrecognizedNames
             };
             """,
             list(self.starting_item_priority),
             list(TARGET_ITEM_ALIASES),
             target_only,
-            list(self.starting_item_ignore),
+            # "Don't pick" set = user's ignore list + every unknown item already
+            # discovered (kept separate from the user's editable ignore list).
+            list(self.starting_item_ignore) + sorted(self.unknown_starting_items),
+            list(KNOWN_PASSIVE_ITEMS),
         )
         names = result.get("names") or []
         ignored_names = result.get("ignoredNames") or []
+        unrecognized_names = result.get("unrecognizedNames") or []
         if names:
             self.log("Starting item rolls: " + ", ".join(names))
-            self.record_unknown_starting_items(names)
+        if unrecognized_names:
+            # Save unrecognized items to the list; they are now auto-ignored
+            # (fed into the "don't pick" set above on the next offer).
+            self.log("Unrecognized passive item(s) → don't pick: " + ", ".join(unrecognized_names))
+            self.record_unknown_starting_items(unrecognized_names)
         if ignored_names:
             self.log("Ignored starting item(s): " + ", ".join(ignored_names))
         if not result.get("clicked"):
             if target_only:
                 return False
             raise RuntimeError("Could not click a passive choice after applying the never-pick list.")
+        if result.get("skipped"):
+            # Everything offered was unrecognized/ignored — skipped the screen.
+            return False
         # A passive item is offered once per map (start of each Tower/Challenge
         # map), so a successful pick marks entering a new map. Used to re-enable
         # catching from map 3 onward (see prioritize_party_fill in pick_map_node).
