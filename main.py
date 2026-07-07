@@ -2911,6 +2911,20 @@ class PokeLikeBotGUI(ctk.CTk):
             const y = rect.top + rect.height / 2;
             const target = document.elementFromPoint(x, y) || card;
             for (const el of [target, card]) {
+                // Hover first: the evolution cards are dynamically-created divs
+                // whose click handler only fires once the card is "hovered"
+                // (they change border/background on hover). A real mouse entering
+                // the window sends these events — the synthetic click alone did
+                // not, which is why the overlay only cleared when the user moved
+                // the mouse in. Fire the full hover sequence before pressing.
+                if (typeof PointerEvent === 'function') {
+                    el.dispatchEvent(new PointerEvent('pointerover', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                    el.dispatchEvent(new PointerEvent('pointerenter', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                    el.dispatchEvent(new PointerEvent('pointermove', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
+                }
+                el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, clientX: x, clientY: y}));
+                el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true, clientX: x, clientY: y}));
+                el.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: x, clientY: y}));
                 if (typeof PointerEvent === 'function') {
                     el.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse'}));
                 }
