@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
 block_cipher = None
@@ -12,17 +12,19 @@ datas = [
 ]
 datas += collect_data_files("customtkinter")
 
+hiddenimports = [
+    "PIL._tkinter_finder",
+]
+hiddenimports += collect_submodules("selenium")
+hiddenimports += collect_submodules("webdriver_manager")
+
 
 a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=[
-        "PIL._tkinter_finder",
-        "webdriver_manager",
-        "webdriver_manager.chrome",
-    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
