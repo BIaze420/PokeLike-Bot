@@ -124,6 +124,7 @@ class PokeLikeBotGUI(ctk.CTk):
 
         self.run_count = 0
         self.maps_reached = 0
+        self.maps_started = 0
         self.item_rolls_checked = 0
         self.total_encounters_checked = 0
         self.target_encounters_seen = 0
@@ -831,6 +832,7 @@ class PokeLikeBotGUI(ctk.CTk):
         ]
         self.run_count = 0
         self.maps_reached = 0
+        self.maps_started = 0
         self.item_rolls_checked = 0
         self.total_encounters_checked = 0
         self.target_encounters_seen = 0
@@ -2423,6 +2425,8 @@ class PokeLikeBotGUI(ctk.CTk):
                 )
             self.pending_passive_item_name = ""
             self.pending_passive_item_priority = None
+            # Replacing a passive is still a per-map passive pick → new map.
+            self.maps_started += 1
             time.sleep(0.35)
             return True
         if result.get("skipped"):
@@ -3124,6 +3128,10 @@ class PokeLikeBotGUI(ctk.CTk):
             if target_only:
                 return False
             raise RuntimeError("Could not click a passive choice after applying the never-pick list.")
+        # A passive item is offered once per map (start of each Tower/Challenge
+        # map), so a successful pick marks entering a new map. Used to re-enable
+        # catching from map 3 onward (see prioritize_party_fill in pick_map_node).
+        self.maps_started += 1
         if result.get("target"):
             self.pending_passive_item_name = result.get("name") or ""
             self.pending_passive_item_priority = 0
@@ -3341,7 +3349,12 @@ class PokeLikeBotGUI(ctk.CTk):
 
         party = self.party_summary()
         party_count = int(party.get("count") or 0)
-        prioritize_party_fill = self.maps_reached >= 2
+        # Catch-avoidance: no catching on the first two maps, then resume.
+        # Story mode advances maps via badges (maps_reached increments on the
+        # badge screen); Battle Tower / Challenge advance via the per-map
+        # passive-item pick (maps_started). Reaching map 3 by either signal
+        # re-enables party fill / catching.
+        prioritize_party_fill = self.maps_reached >= 2 or self.maps_started >= 3
         needs_move_tutor = self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES
         node_by_index = {node["index"]: node for node in route.get("nodes", [])}
         outgoing = {}
@@ -3670,7 +3683,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     .find(btn => {
                         if (btn.closest('#item-choices')) return false;
                         const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-                        return text.includes('equip') || text.includes('use') || text.includes('select');
+                        return text.includes('equip') || text.includes('use') || text.includes('select') || text.includes('swap');
                     }) || null;
             }
             const target = button || row;

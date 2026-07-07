@@ -1,5 +1,5 @@
 #define MyAppName "PokeLike Bot"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Lunatic Labs"
 #define MyAppURL "https://lunaticlabs.shop/"
 #define MyAppExeName "PokeLike Bot.exe"
