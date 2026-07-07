@@ -207,6 +207,9 @@ class PokeLikeBotGUI(ctk.CTk):
             self.settings.get("starting_item_ignore", ""),
             (),
         )
+        # Fold every already-discovered unknown item into the never-pick list so it
+        # is both applied (never picked) AND visible/editable in Item Priorities.
+        self.merge_unknowns_into_ignore()
         self.priority_window = None
 
         self.build_gui()
@@ -494,7 +497,22 @@ class PokeLikeBotGUI(ctk.CTk):
             except Exception as exc:
                 self.log(f"Could not save unknown starting items: {exc}")
                 return
+        # Also surface newly-found unknowns in the never-pick list.
+        self.merge_unknowns_into_ignore()
         self.log("Unknown starting item(s) recorded: " + ", ".join(sorted(new_items)))
+
+    def merge_unknowns_into_ignore(self):
+        """Add every discovered unknown item to the never-pick (ignore) list so it
+        is applied AND shown in the Item Priorities window. Idempotent."""
+        try:
+            have = {self.normalize_item_name(x) for x in self.starting_item_ignore}
+            for item in sorted(self.unknown_starting_items):
+                norm = self.normalize_item_name(item)
+                if norm and norm not in have:
+                    self.starting_item_ignore.append(item)
+                    have.add(norm)
+        except Exception:
+            pass
 
     def save_settings(self):
         settings = {
@@ -652,7 +670,8 @@ class PokeLikeBotGUI(ctk.CTk):
 
         ctk.CTkLabel(
             window,
-            text="One item per line. Higher priority lines are picked first. Ignored starting items are never picked.",
+            text="One item per line. Higher priority lines are picked first; never-pick items are skipped. "
+                 "Select a line (or click into it) and use ↓/↑ to move it between the two lists.",
             text_color="gray70",
         ).grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 10), sticky="w")
 
@@ -671,12 +690,55 @@ class PokeLikeBotGUI(ctk.CTk):
         regular_text.grid(row=2, column=1, rowspan=3, padx=(8, 16), pady=(0, 12), sticky="nsew")
         regular_text.insert("1.0", self.priority_text(self.regular_item_priority))
 
-        ctk.CTkLabel(window, text="Starting / passive never-pick list").grid(
-            row=3, column=0, padx=(16, 8), pady=(0, 6), sticky="w"
-        )
+        ignore_header = ctk.CTkFrame(window, fg_color="transparent")
+        ignore_header.grid(row=3, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
+        ctk.CTkLabel(ignore_header, text="Starting / passive never-pick list").pack(side="left")
+        ctk.CTkButton(
+            ignore_header, text="↑ To priority", width=96,
+            command=lambda: move_lines(ignore_text, starting_text),
+        ).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(
+            ignore_header, text="↓ To never-pick", width=118,
+            command=lambda: move_lines(starting_text, ignore_text),
+        ).pack(side="right")
+
         ignore_text = ctk.CTkTextbox(window, corner_radius=10)
         ignore_text.grid(row=4, column=0, padx=(16, 8), pady=(0, 12), sticky="nsew")
         ignore_text.insert("1.0", self.priority_text(self.starting_item_ignore))
+
+        def _selected_lines(box):
+            tb = getattr(box, "_textbox", box)
+            try:
+                r = tb.tag_ranges("sel")
+            except Exception:
+                r = None
+            if r:
+                start = tb.index("%s linestart" % r[0])
+                end = tb.index("%s lineend" % r[1])
+            else:  # no selection -> the line the cursor is on
+                start = tb.index("insert linestart")
+                end = tb.index("insert lineend")
+            return [ln.strip() for ln in tb.get(start, end).splitlines() if ln.strip()]
+
+        def move_lines(src, dst):
+            picks = _selected_lines(src)
+            if not picks:
+                return
+            picked = {p.lower() for p in picks}
+            src_lines = [
+                ln.strip() for ln in src.get("1.0", "end").splitlines()
+                if ln.strip() and ln.strip().lower() not in picked
+            ]
+            dst_lines = [ln.strip() for ln in dst.get("1.0", "end").splitlines() if ln.strip()]
+            have = {ln.lower() for ln in dst_lines}
+            for p in picks:
+                if p.lower() not in have:
+                    dst_lines.append(p)
+                    have.add(p.lower())
+            src.delete("1.0", "end")
+            src.insert("1.0", "\n".join(src_lines))
+            dst.delete("1.0", "end")
+            dst.insert("1.0", "\n".join(dst_lines))
 
         button_row = ctk.CTkFrame(window, fg_color="transparent")
         button_row.grid(row=5, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="ew")
