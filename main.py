@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.messagebox as messagebox
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -35,6 +36,7 @@ FAVICON_IMAGE_PATH = os.path.join(ASSETS_DIR, "lunaticlabs_logo_transp.png")
 FAVICON_ICO_PATH = os.path.join(ASSETS_DIR, "favicon.ico")
 POKELIKE_URL = "https://pokelike.xyz/"
 SELENIUM_PROFILE_PATH = os.path.join(DATA_DIR, "selenium-profile")
+LOG_PATH = os.path.join(DATA_DIR, "pokelike_bot.log")
 MAX_BROWSER_COUNT = 67
 TARGET_ITEM = "shiny charm"
 TARGET_ITEM_ALIASES = ("shiny charm", "shiny hunter")
@@ -695,6 +697,13 @@ class PokeLikeBotGUI(ctk.CTk):
 
     def log(self, message):
         print(message, flush=True)
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(LOG_PATH, "a", encoding="utf-8") as log_file:
+                log_file.write(f"[{timestamp}] {message}\n")
+        except Exception:
+            pass
 
     def set_status(self, text):
         self.status_var.set(text)
@@ -759,6 +768,12 @@ class PokeLikeBotGUI(ctk.CTk):
             self.clear_thread_driver()
             self.safe_ui(lambda: self.set_status("Error"))
             self.log(f"ERROR opening browser: {exc}")
+            self.safe_ui(
+                lambda exc=exc: messagebox.showerror(
+                    "PokeLike Bot",
+                    f"Could not open Chrome.\n\n{exc}\n\nLog file:\n{LOG_PATH}",
+                )
+            )
         finally:
             self.safe_ui(lambda: self.open_browser_button.configure(state="normal"))
 
@@ -940,13 +955,25 @@ class PokeLikeBotGUI(ctk.CTk):
         options = webdriver.ChromeOptions()
         options.add_argument(f"--user-data-dir={profile_path}")
         options.add_argument("--profile-directory=Default")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
         options.add_argument("--start-maximized")
         options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-        driver = webdriver.Chrome(
-            service=Service(self.get_chromedriver_path()),
-            options=options,
-        )
+        try:
+            driver = webdriver.Chrome(
+                service=Service(self.get_chromedriver_path()),
+                options=options,
+            )
+        except Exception as manager_exc:
+            self.log(f"ChromeDriverManager launch failed, trying Selenium Manager fallback: {manager_exc}")
+            try:
+                driver = webdriver.Chrome(options=options)
+            except Exception as selenium_exc:
+                raise RuntimeError(
+                    "Chrome could not be opened. Make sure Google Chrome is installed, then try Open Browser again. "
+                    f"ChromeDriverManager error: {manager_exc}; Selenium Manager error: {selenium_exc}"
+                ) from selenium_exc
         wait = WebDriverWait(driver, 30)
         if make_active:
             self.driver = driver
@@ -960,7 +987,6 @@ class PokeLikeBotGUI(ctk.CTk):
         live_drivers = self.get_live_drivers()
         missing_worker_ids = list(range(len(live_drivers) + 1, count + 1))
         if missing_worker_ids:
-            self.get_chromedriver_path()
             max_workers = min(len(missing_worker_ids), 12)
             self.log(f"Launching {len(missing_worker_ids)} browser window(s) with {max_workers} parallel worker(s).")
             launched = {}
