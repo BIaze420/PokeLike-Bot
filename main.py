@@ -182,6 +182,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.status_var = ctk.StringVar(value="Idle")
         self.mode_var = ctk.StringVar(value=self.settings.get("mode", MODE_FULL_RUN))
         self.manual_start_var = ctk.BooleanVar(value=bool(self.settings.get("manual_start", False)))
+        self.headless_var = ctk.BooleanVar(value=bool(self.settings.get("headless", False)))
         self.current_mode = MODE_FULL_RUN
         self.manual_first_attempt = False
         self.run_target_var = ctk.StringVar(value=self.settings.get("run_target", RUN_TARGET_OPTIONS[0]))
@@ -518,6 +519,7 @@ class PokeLikeBotGUI(ctk.CTk):
         settings = {
             "mode": self.mode_var.get(),
             "manual_start": bool(self.manual_start_var.get()),
+            "headless": bool(self.headless_var.get()),
             "run_target": self.run_target_var.get(),
             "starter": self.starter_var.get().strip(),
             "shiny_whitelist": self.target_pokemon_var.get().strip(),
@@ -609,6 +611,12 @@ class PokeLikeBotGUI(ctk.CTk):
             variable=self.manual_start_var,
         )
         self.manual_start_checkbox.grid(row=0, column=0, sticky="w")
+        self.headless_checkbox = ctk.CTkCheckBox(
+            manual_box,
+            text="Run Chrome hidden (headless)",
+            variable=self.headless_var,
+        )
+        self.headless_checkbox.grid(row=1, column=0, sticky="w", pady=(6, 0))
         ctk.CTkLabel(manual_box, text="Browsers", text_color="gray70").grid(row=0, column=1, padx=(12, 8), sticky="e")
         self.browser_count_entry = ctk.CTkEntry(manual_box, textvariable=self.browser_count_var, width=70)
         self.browser_count_entry.grid(row=0, column=2, sticky="e")
@@ -856,7 +864,8 @@ class PokeLikeBotGUI(ctk.CTk):
         try:
             drivers = self.launch_missing_drivers(count)
             self.prepare_drivers_concurrently(drivers)
-            self.arrange_browser_windows(screen_w=screen_w, screen_h=screen_h)
+            if not self.headless_var.get():
+                self.arrange_browser_windows(screen_w=screen_w, screen_h=screen_h)
             self.windows_arranged = True
             self.log(f"{count} browser window(s) opened on PokeLike. Navigate to the target tower/starter/run, then press Start Bot.")
             self.safe_ui(lambda: self.set_status("Idle"))
@@ -1054,7 +1063,23 @@ class PokeLikeBotGUI(ctk.CTk):
         options.add_argument("--profile-directory=Default")
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
-        options.add_argument("--start-maximized")
+        # Keep the game's animation loop / timers running at full speed even when
+        # the window is minimized, occluded, or headless (otherwise Chrome throttles
+        # background tabs, which stalled things like the evolution overlay).
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        try:
+            headless = bool(self.headless_var.get())
+        except Exception:
+            headless = False
+        if headless:
+            options.add_argument("--headless=new")
+            options.add_argument("--window-size=1400,1000")
+            options.add_argument("--mute-audio")
+            options.add_argument("--disable-gpu")
+        else:
+            options.add_argument("--start-maximized")
         options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
         try:
@@ -2713,6 +2738,33 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.update_stats_labels()
         time.sleep(0.6)
         return True
+
+    def swap_incoming_info(self):
+        """Read the Pokémon being offered on the swap screen (name / legendary /
+        shiny), from the incoming card or an 'Add X to team!' button."""
+        return self.driver.execute_script(
+            """
+            const legendaryNames = arguments[0].map(n => n.toLowerCase());
+            const active = document.querySelector('#swap-screen') || document.querySelector('.screen.active') || document;
+            const text = (active.innerText || '').toLowerCase();
+            const inc = active.querySelector('#swap-incoming') || active;
+            const img = inc.querySelector('img.poke-sprite, img[src*="/pokemon/"]');
+            const name = (inc.querySelector('.poke-name')?.innerText || img?.getAttribute('alt') || '').trim();
+            const addBtn = [...active.querySelectorAll('button, [role="button"]')]
+                .find(b => /add .*to team/i.test(b.innerText || b.textContent || ''));
+            const addName = addBtn
+                ? (addBtn.innerText || '').replace(/add/i, '').replace(/to team.*/i, '').trim()
+                : '';
+            const cands = [name, addName].map(s => s.toLowerCase()).filter(Boolean);
+            const legendary = text.includes('legendary')
+                || legendaryNames.some(l => cands.some(c => c === l || c.includes(l)));
+            const src = img?.src || '';
+            const shiny = !!inc.querySelector('.shiny-badge, .pc-shiny-star, .shiny-star')
+                || src.includes('/shiny/');
+            return {name: name || addName, legendary, shiny, hasAdd: !!addBtn};
+            """,
+            list(LEGENDARY_POKEMON_NAMES),
+        )
 
     def handle_team_replace_choice(self):
         if not self.pending_team_replace:
@@ -4391,6 +4443,19 @@ class PokeLikeBotGUI(ctk.CTk):
             return self.choose_priority_catch()
 
         if screen == "swap-screen":
+            # A legendary from a map node arrives directly on the swap screen
+            # (no take/skip step), so pending_team_replace isn't set. If the
+            # incoming Pokémon is a legendary, route it through the team-replace
+            # handler: it clicks "Add X to team!" when there's room, or releases a
+            # valid Pokémon when the team is full. Otherwise keep the team as-is.
+            incoming = self.swap_incoming_info() or {}
+            if incoming.get("legendary"):
+                self.pending_team_replace = True
+                self.pending_replace_allow_any = bool(incoming.get("shiny"))
+                self.pending_replace_policy = "legendary_shiny" if incoming.get("shiny") else "legendary"
+                if self.handle_team_replace_choice():
+                    return False
+                self.pending_team_replace = False
             self.js_click("#btn-cancel-swap")
             time.sleep(0.6)
             return False
@@ -4566,7 +4631,7 @@ class PokeLikeBotGUI(ctk.CTk):
         try:
             live_before_launch = len(self.get_live_drivers())
             drivers = self.launch_missing_drivers(self.browser_count)
-            if not self.windows_arranged or len(drivers) != live_before_launch:
+            if not self.headless_var.get() and (not self.windows_arranged or len(drivers) != live_before_launch):
                 self.arrange_browser_windows()
                 self.windows_arranged = True
             self.log(f"Running with {len(drivers)} browser window(s).")
