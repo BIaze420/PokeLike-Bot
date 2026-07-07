@@ -2,6 +2,8 @@
 
 PokeLike Bot is a free Windows automation tool for PokeLike. It provides a desktop GUI for opening one or many Chrome windows, starting PokeLike runs, automating reroll decisions, tracking run statistics, and prioritizing valuable Pokemon and item choices.
 
+![PokeLike Bot desktop GUI](https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/pokelike-bot-screenshot.png)
+
 ## Main Features
 
 - Desktop GUI with live status, runtime, run count, item rolls checked, encounters checked, target encounters, shinies seen, Pokegold, and Pokegold per hour.
@@ -23,6 +25,17 @@ PokeLike Bot is a free Windows automation tool for PokeLike. It provides a deskt
 - Reward and replacement policies for shiny, legendary, and priority Pokemon.
 - Play Again / retry handling on end screens.
 - Branded Lunatic Labs header and Windows app icon.
+
+## Logic Highlights
+
+- Shiny Pokemon are always prioritized when they appear.
+- Legendary Pokemon and whitelist Pokemon are prioritized in full-run catch/reward decisions.
+- Dragon and bug Pokemon are preferred before random fallback choices.
+- Catch rerolls are only used after visible Pokemon choices are checked.
+- Full-run mode counts shiny encounters from visible catch choices.
+- Move Tutor / TM opportunities are prioritized for the main Pokemon until the move-upgrade quota is reached.
+- Starting/passive item priority includes Shiny Hunter, Eject Pack, Soft Sand, Shiny Power, Stardust, Yache Berry, Grassy Seed, Dragon Scale, Light Clay, Power Bracer, Macho Brace, Black Belt, and Wise Glasses.
+- Regular reward item priority includes Lucky Egg, Leftovers, Shell Bell, Dragon Fang, Rare Candy, and TM.
 
 ## Download
 

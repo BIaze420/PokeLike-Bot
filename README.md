@@ -4,6 +4,8 @@ PokeLike Bot is a free Windows automation tool for [PokeLike](https://pokelike.x
 
 The bot is built with Python, CustomTkinter, Selenium, and webdriver-manager. It is intended for users who want a simple downloadable tool, and for developers who want to inspect or modify the automation logic.
 
+![PokeLike Bot desktop GUI](assets/pokelike-bot-screenshot.png)
+
 ## Features
 
 - **Graphical control panel** with run status, runtime, run count, item rolls checked, encounters checked, target encounters, shinies seen, Pokegold, and Pokegold per hour.
@@ -37,6 +39,59 @@ The bot is built with Python, CustomTkinter, Selenium, and webdriver-manager. It
 - **End-screen handling** for Play Again / retry flows.
 - **Live money tracking** with Pokegold per hour.
 - **Branded Lunatic Labs header** with bundled logo assets and Windows icon.
+
+## Pokemon And Item Logic
+
+PokeLike Bot is built around conservative priority rules so it checks the visible game state before rerolling or skipping rewards.
+
+### Pokemon Priority
+
+- Shiny Pokemon are always prioritized when they appear.
+- Legendary Pokemon are prioritized in full-run reward and catch decisions.
+- Pokemon listed in the whitelist are treated as priority catches.
+- Dragon and bug Pokemon are preferred before random fallback choices in full-run catch screens.
+- Catch rerolls are only used after the bot has inspected the visible Pokemon choices first.
+- Full-run mode counts shiny encounters from visible catch choices, so the `Shinies seen` stat also works outside dedicated shiny reroll modes.
+- Team replacement logic favors keeping shiny, legendary, and priority Pokemon instead of replacing them with weaker choices.
+
+### Move Tutor And TM Logic
+
+- Move Tutor and TM opportunities are prioritized for the main Pokemon.
+- Full-run mode uses Move Tutor / TM upgrades until the configured maximum move-upgrade quota is reached.
+- After the main Pokemon reaches that quota, the bot stops over-prioritizing move upgrades and continues normal routing/reward logic.
+
+### Starting / Passive Item Logic
+
+Starting and passive items use their own priority list, separate from normal reward items. The default priority includes:
+
+- Shiny Hunter
+- Eject Pack
+- Soft Sand
+- Shiny Power
+- Stardust
+- Yache Berry
+- Grassy Seed
+- Dragon Scale
+- Light Clay
+- Power Bracer
+- Macho Brace
+- Black Belt
+- Wise Glasses
+
+The bot also has a starting/passive never-pick list and records unknown starting items locally so priority rules can be improved over time.
+
+### Regular Reward Item Logic
+
+Regular item rewards use a separate priority list. The default priority includes:
+
+- Lucky Egg
+- Leftovers
+- Shell Bell
+- Dragon Fang
+- Rare Candy
+- TM
+
+Rare Candy is handled through the item bar when available and is used on the first Pokemon.
 
 ## Requirements
 
