@@ -36,7 +36,13 @@ BANNER_IMAGE_PATH = os.path.join(ASSETS_DIR, "lunaticlabs_banner.png")
 FAVICON_IMAGE_PATH = os.path.join(ASSETS_DIR, "lunaticlabs_logo_transp.png")
 FAVICON_ICO_PATH = os.path.join(ASSETS_DIR, "favicon.ico")
 POKELIKE_URL = "https://pokelike.xyz/"
-SELENIUM_PROFILE_PATH = os.path.join(DATA_DIR, "selenium-profile")
+# The Chrome profile MUST NOT live in a cloud-synced folder (OneDrive/Dropbox):
+# those services lock the profile files while Chrome is using them, which crashes
+# Chrome on launch with "DevToolsActivePort file doesn't exist" and also blocks the
+# profile-reset recovery (WinError 5 / Access denied). Always keep it under
+# %LOCALAPPDATA% regardless of where the app or source is run from.
+_PROFILE_BASE = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or DATA_DIR
+SELENIUM_PROFILE_PATH = os.path.join(_PROFILE_BASE, APP_NAME, "selenium-profile")
 LOG_PATH = os.path.join(DATA_DIR, "pokelike_bot.log")
 MAX_BROWSER_COUNT = 67
 TARGET_ITEM = "shiny charm"
@@ -1082,45 +1088,53 @@ class PokeLikeBotGUI(ctk.CTk):
         profile_path = self.profile_path_for_worker(worker_id)
         os.makedirs(profile_path, exist_ok=True)
 
-        options = webdriver.ChromeOptions()
-        options.add_argument(f"--user-data-dir={profile_path}")
-        options.add_argument("--profile-directory=Default")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        # Keep the game's animation loop / timers running at full speed even when
-        # the window is minimized, occluded, or headless (otherwise Chrome throttles
-        # background tabs, which stalled things like the evolution overlay).
-        options.add_argument("--disable-background-timer-throttling")
-        options.add_argument("--disable-backgrounding-occluded-windows")
-        options.add_argument("--disable-renderer-backgrounding")
-        # Let Chrome pick a free DevTools port. Fixes the "DevToolsActivePort file
-        # doesn't exist" launch failure, especially in headless mode.
-        options.add_argument("--remote-debugging-port=0")
         try:
             headless = bool(self.headless_var.get())
         except Exception:
             headless = False
-        if headless:
-            options.add_argument("--headless=new")
-            options.add_argument("--window-size=1400,1000")
-            options.add_argument("--mute-audio")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-        else:
-            options.add_argument("--start-maximized")
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-        def start_chrome():
+        def build_options(safe=False):
+            o = webdriver.ChromeOptions()
+            o.add_argument(f"--user-data-dir={profile_path}")
+            o.add_argument("--profile-directory=Default")
+            o.add_argument("--no-first-run")
+            o.add_argument("--no-default-browser-check")
+            o.add_experimental_option("excludeSwitches", ["enable-logging"])
+            if headless:
+                # Headless needs these to launch reliably.
+                o.add_argument("--headless=new")
+                o.add_argument("--window-size=1400,1000")
+                o.add_argument("--mute-audio")
+                o.add_argument("--disable-gpu")
+                o.add_argument("--no-sandbox")
+                o.add_argument("--disable-dev-shm-usage")
+            if safe:
+                # Minimal, known-good config used as a fallback: if any enhancement
+                # flag upsets this Chrome (e.g. "DevToolsActivePort file doesn't
+                # exist"), we still launch. Visible mode gets --start-maximized.
+                if not headless:
+                    o.add_argument("--start-maximized")
+                return o
+            # Enhancements: keep the game's loop running while minimized/occluded,
+            # and let Chrome pick a free DevTools port.
+            o.add_argument("--disable-background-timer-throttling")
+            o.add_argument("--disable-backgrounding-occluded-windows")
+            o.add_argument("--disable-renderer-backgrounding")
+            o.add_argument("--remote-debugging-port=0")
+            if not headless:
+                o.add_argument("--start-maximized")
+            return o
+
+        def start_chrome(opts):
             try:
                 return webdriver.Chrome(
                     service=Service(self.get_chromedriver_path()),
-                    options=options,
+                    options=opts,
                 )
             except Exception as manager_exc:
                 self.log(f"ChromeDriverManager launch failed, trying Selenium Manager fallback: {manager_exc}")
                 try:
-                    return webdriver.Chrome(options=options)
+                    return webdriver.Chrome(options=opts)
                 except Exception as selenium_exc:
                     raise RuntimeError(
                         "Chrome could not be opened. Make sure Google Chrome is installed, then try Open Browser again. "
@@ -1128,20 +1142,26 @@ class PokeLikeBotGUI(ctk.CTk):
                     ) from selenium_exc
 
         try:
-            driver = start_chrome()
+            driver = start_chrome(build_options(safe=False))
         except Exception as first_exc:
             if not self.is_chrome_profile_startup_crash(first_exc):
                 raise
-            if not self.quarantine_browser_profile(profile_path, worker_id):
-                raise
-            os.makedirs(profile_path, exist_ok=True)
+            # 1) Retry with the minimal/known-good flags (rules out a bad flag).
+            self.log("Chrome failed to start; retrying with minimal launch flags.")
             try:
-                driver = start_chrome()
-            except Exception as retry_exc:
-                raise RuntimeError(
-                    f"Chrome still could not be opened after resetting the browser {worker_id} profile. "
-                    f"Original error: {first_exc}; retry error: {retry_exc}"
-                ) from retry_exc
+                driver = start_chrome(build_options(safe=True))
+            except Exception:
+                # 2) Still failing -> the profile is likely locked/corrupt: reset it.
+                if not self.quarantine_browser_profile(profile_path, worker_id):
+                    raise
+                os.makedirs(profile_path, exist_ok=True)
+                try:
+                    driver = start_chrome(build_options(safe=True))
+                except Exception as retry_exc:
+                    raise RuntimeError(
+                        f"Chrome still could not be opened after resetting the browser {worker_id} profile. "
+                        f"Original error: {first_exc}; retry error: {retry_exc}"
+                    ) from retry_exc
         wait = WebDriverWait(driver, 30)
         if make_active:
             self.driver = driver
@@ -1948,6 +1968,20 @@ class PokeLikeBotGUI(ctk.CTk):
     def select_challenge_or_starter(self):
         for _ in range(30):
             screen = self.active_screen_id()
+            if screen in [
+                "map-screen",
+                "battle-screen",
+                "item-screen",
+                "catch-screen",
+                "passive-screen",
+                "stat-buff-screen",
+                "move-tutor-screen",
+                "swap-screen",
+                "trade-screen",
+                "elite-prep-screen",
+            ]:
+                self.log(f"Start complete; continuing from screen={screen}.")
+                return
 
             if self.click_weekly_sub_choice_if_visible():
                 self.wait_until_screen_changes(screen, timeout=0.45)
@@ -2135,7 +2169,6 @@ class PokeLikeBotGUI(ctk.CTk):
                     }
                     if (typeof el.click === 'function') el.click();
                 };
-                const active = document.querySelector('.screen.active');
                 const root = active || document;
                 const selectors = [
                     '#starter-choices [role="button"]',
@@ -3514,7 +3547,7 @@ class PokeLikeBotGUI(ctk.CTk):
                 // 'other' (which the bot deprioritizes and walks past).
                 if (text.includes('legendary') || /master.?ball/.test(text)) return 'legendary';
                 if (text.includes('move-tutor')) return 'move-tutor';
-                if (text.includes('pokeball')) return 'pokeball';
+                if (text.includes('pokeball') || /poke.?ball/.test(text)) return 'pokeball';
                 if (text.includes('grass')) return 'grass';
                 if (text.includes('question')) return 'question';
                 if (text.includes('item-icon')) return 'item';
@@ -3524,6 +3557,11 @@ class PokeLikeBotGUI(ctk.CTk):
                     || text.includes('team-rocket') || text.includes('policeman') || text.includes('hiker')
                     || text.includes('scientist') || text.includes('old-guy') || text.includes('fire-spitter')
                     || text.includes('mistery-trainer') || text.includes('mystery-trainer')) return 'trainer';
+                // Region maps use generation-specific sprite folders for
+                // trainers and bosses, e.g. g2/captain.png, school-boy.png,
+                // falkner.png. Non-trainer map icons are handled above, so any
+                // remaining regional sprite should route as a battle node.
+                if (/img\\/sprites\\/g\\d+\\//.test(text)) return 'trainer';
                 return 'other';
             };
             const nodes = [...svg.querySelectorAll('g.map-node')].map((node, index) => {
