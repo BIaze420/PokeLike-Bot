@@ -1,10 +1,57 @@
-# PokeLike Bot
+<p align="center">
+  <img src="assets/readme-banner.svg" alt="PokeLike Bot - star and watch the repository" width="100%">
+</p>
+
+<h1 align="center">PokeLike Bot</h1>
+
+<p align="center">
+  <a href="https://github.com/BIaze420/PokeLike-Bot/releases/latest">
+    <img src="https://img.shields.io/badge/Download_latest_EXE-21c16b?style=for-the-badge&logo=windows&logoColor=white" alt="Download latest EXE">
+  </a>
+  <a href="https://github.com/BIaze420/PokeLike-Bot/stargazers">
+    <img src="https://img.shields.io/github/stars/BIaze420/PokeLike-Bot?style=for-the-badge&label=Star%20this%20project&color=ffd24a" alt="Star this project on GitHub">
+  </a>
+  <a href="https://github.com/BIaze420/PokeLike-Bot/subscription">
+    <img src="https://img.shields.io/badge/Watch_for_updates-65d9ff?style=for-the-badge&logo=github&logoColor=111827" alt="Watch this repository for updates">
+  </a>
+</p>
 
 PokeLike Bot is a free Windows automation tool for [PokeLike](https://pokelike.xyz/). It opens one or more Chrome browser windows, starts configured PokeLike runs, and automates common reroll and full-run decisions from a desktop GUI.
 
-The bot is built with Python, CustomTkinter, Selenium, and webdriver-manager. It is intended for users who want a simple downloadable tool, and for developers who want to inspect or modify the automation logic.
+If this bot helps you, please give the GitHub repository a star and watch it for updates. It supports the project and helps the maintainer's GitHub account grow.
+
+## Download
+
+For normal users, the packaged `.exe` is the easiest option:
+
+<p>
+  <a href="https://github.com/BIaze420/PokeLike-Bot/releases/latest">
+    <img src="https://img.shields.io/badge/Download-PokeLike%20Bot.exe-21c16b?style=for-the-badge&logo=windows&logoColor=white" alt="Download PokeLike Bot.exe">
+  </a>
+</p>
+
+From the latest release, download:
+
+- `PokeLike Bot.exe`
+- `PokeLikeBotSetup.exe` if you prefer the installer and it is available
+
+## Quick Start
+
+1. Download the latest `.exe` from the Releases page.
+2. Open PokeLike Bot.
+3. Click `Open Browser` and log in to PokeLike inside the bot-controlled browser.
+4. Choose a mode, starter, run target, and browser count.
+5. Click `Start Bot`.
 
 ![PokeLike Bot desktop GUI](assets/pokelike-bot-screenshot.png)
+
+## Why Use It?
+
+- Automates full runs, shiny rerolls, Pokemon whitelist rerolls, and item choices.
+- Supports Story, Battle Tower, Challenge, Weekly, and Daily targets.
+- Tracks run stats including shinies seen, Pokegold, and Pokegold per hour.
+- Can open and tile multiple Chrome windows for faster parallel sessions.
+- Uses editable priority lists for items, Pokemon choices, and reward handling.
 
 ## Features
 
@@ -102,17 +149,7 @@ For source runs:
 - Google Chrome
 - Internet access on first run so webdriver-manager can download the matching ChromeDriver
 
-For normal users, the packaged `.exe` is the easiest option.
-
-## Download
-
-Go to the GitHub Releases page for this repository and download the latest Windows build:
-
-- `PokeLike Bot.exe`
-
-If an installer is provided, download:
-
-- `PokeLikeBotSetup.exe`
+For normal users, use the packaged `.exe` from the download section above.
 
 ## First Run Login
 

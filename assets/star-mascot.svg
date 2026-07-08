@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 200" width="560" height="200" font-family="'Press Start 2P','Segoe UI',system-ui,sans-serif">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#59d6c3"/>
+      <stop offset="1" stop-color="#2a9d8f"/>
+    </linearGradient>
+    <linearGradient id="star" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe66d"/>
+      <stop offset="1" stop-color="#f7b500"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0b132b" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <!-- curved dashed arrow sweeping toward the top-right star -->
+  <g fill="none" stroke="#8d99ae" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 12">
+    <path d="M196 96 C 300 40, 380 34, 470 46">
+      <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="0.9s" repeatCount="indefinite"/>
+    </path>
+  </g>
+  <path d="M452 34 L474 44 L458 62 Z" fill="#8d99ae"/>
+
+  <!-- top-right star -->
+  <g filter="url(#soft)">
+    <path fill="url(#star)" stroke="#c98a00" stroke-width="3" stroke-linejoin="round"
+      d="M505 22 l11 22 24 3 -18 17 5 24 -22 -12 -22 12 5 -24 -18 -17 24 -3 z">
+      <animateTransform attributeName="transform" type="rotate" from="-6 505 46" to="6 505 46"
+        dur="1.6s" repeatCount="indefinite" additive="sum"
+        values="-6 505 46; 6 505 46; -6 505 46" keyTimes="0;0.5;1"/>
+    </path>
+  </g>
+  <circle cx="486" cy="24" r="2.5" fill="#fff3b0"/>
+  <circle cx="534" cy="70" r="2" fill="#fff3b0"/>
+
+  <!-- speech bubble -->
+  <g filter="url(#soft)">
+    <rect x="232" y="112" width="300" height="62" rx="14" fill="#fffdf5" stroke="#2b2d42" stroke-width="3"/>
+    <path d="M250 172 l-14 24 34 -18 z" fill="#fffdf5" stroke="#2b2d42" stroke-width="3"/>
+    <text x="382" y="139" text-anchor="middle" font-size="15" fill="#e63946" font-weight="700">Enjoying the game?</text>
+    <text x="382" y="162" text-anchor="middle" font-size="15" fill="#2b2d42" font-weight="700">Drop a  ★  up there! ↗</text>
+  </g>
+
+  <!-- ===== mascot ===== -->
+  <g filter="url(#soft)">
+    <!-- feet -->
+    <ellipse cx="86" cy="182" rx="20" ry="9" fill="#238b7e"/>
+    <ellipse cx="132" cy="182" rx="20" ry="9" fill="#238b7e"/>
+    <!-- tail -->
+    <path d="M150 150 q40 6 34 -34 q-2 26 -34 22 z" fill="#2a9d8f" stroke="#1c6f66" stroke-width="2"/>
+    <!-- body -->
+    <ellipse cx="108" cy="126" rx="62" ry="60" fill="url(#body)" stroke="#1c6f66" stroke-width="3"/>
+    <!-- belly -->
+    <ellipse cx="108" cy="140" rx="38" ry="40" fill="#fdf6e3"/>
+    <!-- left arm resting -->
+    <path d="M56 118 q-22 8 -18 30 q10 -14 24 -16 z" fill="#2a9d8f" stroke="#1c6f66" stroke-width="2"/>
+    <!-- right arm pointing up-right -->
+    <g>
+      <path d="M158 108 q46 -20 60 -46" fill="none" stroke="#2a9d8f" stroke-width="16" stroke-linecap="round"/>
+      <path d="M158 108 q46 -20 60 -46" fill="none" stroke="#1c6f66" stroke-width="16" stroke-linecap="round" opacity="0.0"/>
+      <circle cx="220" cy="60" r="12" fill="#59d6c3" stroke="#1c6f66" stroke-width="2.5"/>
+      <animateTransform attributeName="transform" type="translate" values="0 0; 3 -4; 0 0" dur="1.2s" repeatCount="indefinite"/>
+    </g>
+    <!-- cheeks -->
+    <circle cx="70" cy="130" r="9" fill="#ff8fab" opacity="0.8"/>
+    <circle cx="146" cy="130" r="9" fill="#ff8fab" opacity="0.8"/>
+    <!-- eyes -->
+    <circle cx="90" cy="112" r="12" fill="#fff" stroke="#1c2541" stroke-width="2"/>
+    <circle cx="126" cy="112" r="12" fill="#fff" stroke="#1c2541" stroke-width="2"/>
+    <circle cx="93" cy="114" r="6" fill="#1c2541"/>
+    <circle cx="129" cy="114" r="6" fill="#1c2541"/>
+    <circle cx="95" cy="112" r="2" fill="#fff"/>
+    <circle cx="131" cy="112" r="2" fill="#fff"/>
+    <!-- smile -->
+    <path d="M99 134 q9 10 18 0" fill="none" stroke="#1c2541" stroke-width="3" stroke-linecap="round"/>
+    <!-- little head fin -->
+    <path d="M108 66 l10 14 -20 0 z" fill="#f7b500" stroke="#c98a00" stroke-width="2"/>
+  </g>
+</svg>

@@ -1,6 +1,31 @@
-# PokeLike Bot
+<p align="center">
+  <img src="https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/readme-banner.svg" alt="PokeLike Bot - star and watch the repository" width="100%">
+</p>
+
+<h1 align="center">PokeLike Bot</h1>
+
+<p align="center">
+  <a href="https://github.com/BIaze420/PokeLike-Bot/releases/latest">
+    <img src="https://img.shields.io/badge/Download_latest_EXE-21c16b?style=for-the-badge&logo=windows&logoColor=white" alt="Download latest EXE">
+  </a>
+  <a href="https://github.com/BIaze420/PokeLike-Bot/stargazers">
+    <img src="https://img.shields.io/github/stars/BIaze420/PokeLike-Bot?style=for-the-badge&label=Star%20this%20project&color=ffd24a" alt="Star this project on GitHub">
+  </a>
+  <a href="https://github.com/BIaze420/PokeLike-Bot/subscription">
+    <img src="https://img.shields.io/badge/Watch_for_updates-65d9ff?style=for-the-badge&logo=github&logoColor=111827" alt="Watch this repository for updates">
+  </a>
+</p>
 
 PokeLike Bot is a free Windows automation tool for PokeLike. It provides a desktop GUI for opening one or many Chrome windows, starting PokeLike runs, automating reroll decisions, tracking run statistics, and prioritizing valuable Pokemon and item choices.
+
+If this bot helps you, please give the repository a star and watch it for updates. It supports the project and helps the maintainer's GitHub account grow.
+
+## Download
+
+Download the latest Windows executable from the Releases page:
+
+- `PokeLike Bot.exe`
+- `PokeLikeBotSetup.exe` if you prefer the installer and it is available
 
 ![PokeLike Bot desktop GUI](https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/pokelike-bot-screenshot.png)
 
@@ -36,16 +61,6 @@ PokeLike Bot is a free Windows automation tool for PokeLike. It provides a deskt
 - Move Tutor / TM opportunities are prioritized for the main Pokemon until the move-upgrade quota is reached.
 - Starting/passive item priority includes Shiny Hunter, Eject Pack, Soft Sand, Shiny Power, Stardust, Yache Berry, Grassy Seed, Dragon Scale, Light Clay, Power Bracer, Macho Brace, Black Belt, and Wise Glasses.
 - Regular reward item priority includes Lucky Egg, Leftovers, Shell Bell, Dragon Fang, Rare Candy, and TM.
-
-## Download
-
-Download the latest Windows executable from the Releases page:
-
-- `PokeLike Bot.exe`
-
-If available, download the installer:
-
-- `PokeLikeBotSetup.exe`
 
 ## First Run
 
