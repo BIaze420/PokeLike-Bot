@@ -1093,6 +1093,9 @@ class PokeLikeBotGUI(ctk.CTk):
         options.add_argument("--disable-background-timer-throttling")
         options.add_argument("--disable-backgrounding-occluded-windows")
         options.add_argument("--disable-renderer-backgrounding")
+        # Let Chrome pick a free DevTools port. Fixes the "DevToolsActivePort file
+        # doesn't exist" launch failure, especially in headless mode.
+        options.add_argument("--remote-debugging-port=0")
         try:
             headless = bool(self.headless_var.get())
         except Exception:
@@ -1102,6 +1105,8 @@ class PokeLikeBotGUI(ctk.CTk):
             options.add_argument("--window-size=1400,1000")
             options.add_argument("--mute-audio")
             options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
         else:
             options.add_argument("--start-maximized")
         options.add_experimental_option("excludeSwitches", ["enable-logging"])
