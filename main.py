@@ -1053,6 +1053,30 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.chromedriver_path = ChromeDriverManager().install()
             return self.chromedriver_path
 
+    def is_chrome_profile_startup_crash(self, exc):
+        message = str(exc).lower()
+        return (
+            "devtoolsactiveport" in message
+            or "chrome failed to start: crashed" in message
+            or "processsingleton" in message
+        )
+
+    def quarantine_browser_profile(self, profile_path, worker_id):
+        if not os.path.isdir(profile_path):
+            return False
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_path = f"{profile_path}.broken-{timestamp}"
+        try:
+            os.replace(profile_path, backup_path)
+            self.log(
+                f"Chrome profile for browser {worker_id} appears corrupted or locked; "
+                f"moved it to {backup_path} and retrying with a fresh profile."
+            )
+            return True
+        except Exception as exc:
+            self.log(f"Could not move broken Chrome profile {profile_path}: {exc}")
+            return False
+
     def launch_driver(self, worker_id=1, make_active=True):
         self.ensure_worker_profile(worker_id)
         profile_path = self.profile_path_for_worker(worker_id)
@@ -1082,20 +1106,37 @@ class PokeLikeBotGUI(ctk.CTk):
             options.add_argument("--start-maximized")
         options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-        try:
-            driver = webdriver.Chrome(
-                service=Service(self.get_chromedriver_path()),
-                options=options,
-            )
-        except Exception as manager_exc:
-            self.log(f"ChromeDriverManager launch failed, trying Selenium Manager fallback: {manager_exc}")
+        def start_chrome():
             try:
-                driver = webdriver.Chrome(options=options)
-            except Exception as selenium_exc:
+                return webdriver.Chrome(
+                    service=Service(self.get_chromedriver_path()),
+                    options=options,
+                )
+            except Exception as manager_exc:
+                self.log(f"ChromeDriverManager launch failed, trying Selenium Manager fallback: {manager_exc}")
+                try:
+                    return webdriver.Chrome(options=options)
+                except Exception as selenium_exc:
+                    raise RuntimeError(
+                        "Chrome could not be opened. Make sure Google Chrome is installed, then try Open Browser again. "
+                        f"ChromeDriverManager error: {manager_exc}; Selenium Manager error: {selenium_exc}"
+                    ) from selenium_exc
+
+        try:
+            driver = start_chrome()
+        except Exception as first_exc:
+            if not self.is_chrome_profile_startup_crash(first_exc):
+                raise
+            if not self.quarantine_browser_profile(profile_path, worker_id):
+                raise
+            os.makedirs(profile_path, exist_ok=True)
+            try:
+                driver = start_chrome()
+            except Exception as retry_exc:
                 raise RuntimeError(
-                    "Chrome could not be opened. Make sure Google Chrome is installed, then try Open Browser again. "
-                    f"ChromeDriverManager error: {manager_exc}; Selenium Manager error: {selenium_exc}"
-                ) from selenium_exc
+                    f"Chrome still could not be opened after resetting the browser {worker_id} profile. "
+                    f"Original error: {first_exc}; retry error: {retry_exc}"
+                ) from retry_exc
         wait = WebDriverWait(driver, 30)
         if make_active:
             self.driver = driver
