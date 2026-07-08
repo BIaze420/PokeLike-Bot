@@ -2,11 +2,14 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.messagebox as messagebox
+import tempfile
+import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -23,6 +26,10 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_NAME = "PokeLike Bot"
+APP_VERSION = "1.0.2"
+UPDATE_REPO = "BIaze420/PokeLike-Bot"
+UPDATE_API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+UPDATE_ASSET_NAME = "PokeLike Bot.exe"
 APP_DIR = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
 RESOURCE_DIR = getattr(sys, "_MEIPASS", APP_DIR)
 DATA_DIR = (
@@ -124,11 +131,125 @@ RUN_TARGET_OPTIONS = (
     *[f"Battle Tower - {region}" for region in TOWER_REGIONS],
     *[f"Story {mode} - {region}" for mode in STORY_MODES for region in STORY_REGIONS],
 )
+SCHEDULE_COMPLETION_OPTIONS = ("Wins", "Runs")
+DEFAULT_TASK_SCHEDULE = (
+    {"target": RUN_TARGET_DAILY, "goal": "Wins", "count": 1},
+    {"target": RUN_TARGET_WEEKLY, "goal": "Wins", "count": 1},
+    {"target": "Story Classic - Kanto", "goal": "Runs", "count": 100},
+)
 SETTINGS_PATH = os.path.join(DATA_DIR, "pokelike_settings.json")
 UNKNOWN_STARTING_ITEMS_PATH = os.path.join(
     DATA_DIR,
     "unknown_starting_items.json",
 )
+
+
+def normalize_version_tag(value):
+    text = str(value or "").strip().lower()
+    if text.startswith("v"):
+        text = text[1:]
+    parts = []
+    for piece in text.split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        if digits:
+            parts.append(int(digits))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:4])
+
+
+def is_newer_version(remote_version, local_version=APP_VERSION):
+    return normalize_version_tag(remote_version) > normalize_version_tag(local_version)
+
+
+def github_request_json(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def latest_release_update_info():
+    release = github_request_json(UPDATE_API_URL)
+    tag_name = release.get("tag_name") or release.get("name") or ""
+    if not is_newer_version(tag_name):
+        return None
+    for asset in release.get("assets", []) or []:
+        name = asset.get("name") or ""
+        if name.lower() == UPDATE_ASSET_NAME.lower():
+            return {
+                "version": tag_name,
+                "url": asset.get("browser_download_url"),
+                "name": name,
+            }
+    return None
+
+
+def download_update_asset(update_info):
+    url = update_info.get("url")
+    if not url:
+        raise RuntimeError("Latest release does not include a downloadable bot exe.")
+    target_dir = os.path.join(DATA_DIR, "updates")
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, f"{APP_NAME}-{update_info.get('version', 'latest')}.exe")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response, open(target_path, "wb") as out_file:
+        shutil.copyfileobj(response, out_file)
+    return target_path
+
+
+def launch_self_updater(new_exe_path):
+    current_exe = sys.executable
+    script_path = os.path.join(tempfile.gettempdir(), f"{APP_NAME.replace(' ', '')}-update.ps1")
+    script = f"""
+$ErrorActionPreference = "Stop"
+$pidToWait = {os.getpid()}
+$current = {json.dumps(current_exe)}
+$new = {json.dumps(new_exe_path)}
+$backup = "$current.old"
+try {{
+    Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 600
+    if (Test-Path -LiteralPath $backup) {{
+        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    }}
+    if (Test-Path -LiteralPath $current) {{
+        Move-Item -LiteralPath $current -Destination $backup -Force
+    }}
+    Move-Item -LiteralPath $new -Destination $current -Force
+    Start-Process -FilePath $current
+    if (Test-Path -LiteralPath $backup) {{
+        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    }}
+}} catch {{
+    if ((-not (Test-Path -LiteralPath $current)) -and (Test-Path -LiteralPath $backup)) {{
+        Move-Item -LiteralPath $backup -Destination $current -Force
+    }}
+    Start-Process -FilePath $current
+}}
+Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
+    with open(script_path, "w", encoding="utf-8") as script_file:
+        script_file.write(script)
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script_path,
+        ],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
 
 
 class PokeLikeBotGUI(ctk.CTk):
@@ -195,6 +316,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.starter_var = ctk.StringVar(value=self.settings.get("starter", STARTER_NAME.title()))
         self.target_pokemon_var = ctk.StringVar(value=self.settings.get("shiny_whitelist", ""))
         self.browser_count_var = ctk.StringVar(value=str(self.settings.get("browser_count", 1)))
+        self.schedule_enabled_var = ctk.BooleanVar(value=bool(self.settings.get("schedule_enabled", False)))
         self.browser_count = 1
         self.current_run_target = RUN_TARGET_OPTIONS[0]
         self.current_run_target_info = self.parse_run_target(RUN_TARGET_OPTIONS[0])
@@ -218,8 +340,18 @@ class PokeLikeBotGUI(ctk.CTk):
         # is both applied (never picked) AND visible/editable in Item Priorities.
         self.merge_unknowns_into_ignore()
         self.priority_window = None
+        self.schedule_window = None
+        self.task_schedule = self.parse_task_schedule(
+            self.settings.get("task_schedule"),
+            DEFAULT_TASK_SCHEDULE,
+        )
+        self.schedule_active = False
+        self.schedule_index = 0
+        self.schedule_progress = []
+        self.schedule_result_signature = None
 
         self.build_gui()
+        self.after(1000, self.start_update_check)
 
     def load_brand_assets(self):
         try:
@@ -417,6 +549,13 @@ class PokeLikeBotGUI(ctk.CTk):
         browser_count = data.get("browser_count")
         if isinstance(browser_count, int) and browser_count > 0:
             settings["browser_count"] = min(browser_count, MAX_BROWSER_COUNT)
+        for key in ["manual_start", "headless", "schedule_enabled"]:
+            value = data.get(key)
+            if isinstance(value, bool):
+                settings[key] = value
+        task_schedule = self.parse_task_schedule(data.get("task_schedule"), DEFAULT_TASK_SCHEDULE)
+        if task_schedule:
+            settings["task_schedule"] = task_schedule
         return settings
 
     def legacy_tower_to_run_target(self, value):
@@ -447,6 +586,25 @@ class PokeLikeBotGUI(ctk.CTk):
             mode = prefix.replace("Story ", "", 1)
             return {"kind": "story", "name": region, "story_mode": mode.lower()}
         return {"kind": "challenge", "name": "Challenge Mode", "challenge": "challenge"}
+
+    def parse_task_schedule(self, value, default_values=()):
+        raw_steps = value if isinstance(value, list) and value else list(default_values)
+        steps = []
+        for item in raw_steps:
+            if not isinstance(item, dict):
+                continue
+            target = item.get("target")
+            if target not in RUN_TARGET_OPTIONS:
+                continue
+            goal = str(item.get("goal", "Wins")).strip().title()
+            if goal not in SCHEDULE_COMPLETION_OPTIONS:
+                goal = "Wins"
+            try:
+                count = int(item.get("count", 1))
+            except Exception:
+                count = 1
+            steps.append({"target": target, "goal": goal, "count": max(1, min(count, 9999))})
+        return steps or [dict(step) for step in DEFAULT_TASK_SCHEDULE]
 
     def parse_priority_text(self, text, default_values):
         if isinstance(text, str) and text.strip():
@@ -530,6 +688,8 @@ class PokeLikeBotGUI(ctk.CTk):
             "starter": self.starter_var.get().strip(),
             "shiny_whitelist": self.target_pokemon_var.get().strip(),
             "browser_count": self.parse_browser_count(),
+            "schedule_enabled": bool(self.schedule_enabled_var.get()),
+            "task_schedule": self.task_schedule,
             "starting_item_priority": self.starting_item_priority,
             "regular_item_priority": self.regular_item_priority,
             "starting_item_ignore": self.starting_item_ignore,
@@ -559,20 +719,20 @@ class PokeLikeBotGUI(ctk.CTk):
 
         controls = ctk.CTkFrame(self, corner_radius=14)
         controls.grid(row=1, column=0, padx=18, pady=8, sticky="ew")
-        controls.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        controls.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.status_label = self.create_stat(controls, "Status", "Idle", 0, 0)
         self.runtime_label = self.create_stat(controls, "Runtime", "00:00:00", 0, 1)
         self.runs_label = self.create_stat(controls, "Runs", "0", 0, 2)
-        self.rolls_label = self.create_stat(controls, "Item rolls checked", "0", 0, 3)
-        self.encounters_label = self.create_stat(controls, "Encounters checked", "0", 1, 0)
-        self.target_seen_label = self.create_stat(controls, "Target encounters", "0", 1, 1)
-        self.shinies_seen_label = self.create_stat(controls, "Shinies seen", "0", 1, 2)
-        self.money_label = self.create_stat(controls, "Pokegold", "0", 1, 3)
-        self.money_per_hour_label = self.create_stat(controls, "Pokegold / hour", "0/h", 2, 0)
+        self.rolls_label = self.create_stat(controls, "Item rolls checked", "0", 1, 0)
+        self.encounters_label = self.create_stat(controls, "Encounters checked", "0", 1, 1)
+        self.target_seen_label = self.create_stat(controls, "Target encounters", "0", 1, 2)
+        self.shinies_seen_label = self.create_stat(controls, "Shinies seen", "0", 2, 0)
+        self.money_label = self.create_stat(controls, "Pokegold", "0", 2, 1)
+        self.money_per_hour_label = self.create_stat(controls, "Pokegold / hour", "0/h", 2, 2)
 
         mode_box = ctk.CTkFrame(controls, fg_color="transparent")
-        mode_box.grid(row=3, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
+        mode_box.grid(row=3, column=0, columnspan=3, padx=12, pady=(0, 8), sticky="ew")
         mode_box.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(mode_box, text="Mode", text_color="gray70").grid(row=0, column=0, padx=(0, 10), sticky="w")
         self.mode_selector = ctk.CTkSegmentedButton(
@@ -588,7 +748,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.mode_selector.grid(row=0, column=1, sticky="ew")
 
         setup_box = ctk.CTkFrame(controls, fg_color="transparent")
-        setup_box.grid(row=4, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
+        setup_box.grid(row=4, column=0, columnspan=3, padx=12, pady=(0, 8), sticky="ew")
         setup_box.grid_columnconfigure((1, 3, 5), weight=1)
 
         ctk.CTkLabel(setup_box, text="Run target", text_color="gray70").grid(row=0, column=0, padx=(0, 8), sticky="w")
@@ -607,8 +767,13 @@ class PokeLikeBotGUI(ctk.CTk):
         self.target_pokemon_entry = ctk.CTkEntry(setup_box, textvariable=self.target_pokemon_var, placeholder_text="Bagon, Ralts, Riolu")
         self.target_pokemon_entry.grid(row=0, column=5, sticky="ew")
 
-        manual_box = ctk.CTkFrame(controls, fg_color="transparent")
-        manual_box.grid(row=5, column=0, columnspan=4, padx=12, pady=(0, 8), sticky="ew")
+        options_box = ctk.CTkFrame(controls, fg_color="transparent")
+        options_box.grid(row=5, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="ew")
+        options_box.grid_columnconfigure(0, weight=1, uniform="options")
+        options_box.grid_columnconfigure(1, weight=1, uniform="options")
+
+        manual_box = ctk.CTkFrame(options_box, corner_radius=10, fg_color="#151f2c")
+        manual_box.grid(row=0, column=0, padx=(0, 6), sticky="nsew")
         manual_box.grid_columnconfigure(0, weight=1)
         manual_box.grid_columnconfigure(2, weight=0)
         self.manual_start_checkbox = ctk.CTkCheckBox(
@@ -616,19 +781,51 @@ class PokeLikeBotGUI(ctk.CTk):
             text="Use current run screen on first attempt",
             variable=self.manual_start_var,
         )
-        self.manual_start_checkbox.grid(row=0, column=0, sticky="w")
+        self.manual_start_checkbox.grid(row=0, column=0, padx=12, pady=(10, 0), sticky="w")
         self.headless_checkbox = ctk.CTkCheckBox(
             manual_box,
             text="Run Chrome hidden (headless)",
             variable=self.headless_var,
         )
-        self.headless_checkbox.grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ctk.CTkLabel(manual_box, text="Browsers", text_color="gray70").grid(row=0, column=1, padx=(12, 8), sticky="e")
+        self.headless_checkbox.grid(row=1, column=0, padx=12, pady=(6, 10), sticky="w")
+        ctk.CTkLabel(manual_box, text="Browsers", text_color="gray70").grid(row=0, column=1, padx=(12, 8), pady=(10, 0), sticky="e")
         self.browser_count_entry = ctk.CTkEntry(manual_box, textvariable=self.browser_count_var, width=70)
-        self.browser_count_entry.grid(row=0, column=2, sticky="e")
+        self.browser_count_entry.grid(row=0, column=2, padx=(0, 12), pady=(10, 0), sticky="e")
+
+        schedule_box = ctk.CTkFrame(options_box, corner_radius=10, fg_color="#111827")
+        schedule_box.grid(row=0, column=1, padx=(6, 0), sticky="nsew")
+        schedule_box.grid_columnconfigure(0, weight=1)
+        schedule_top = ctk.CTkFrame(schedule_box, fg_color="transparent")
+        schedule_top.grid(row=0, column=0, padx=12, pady=(10, 4), sticky="ew")
+        schedule_top.grid_columnconfigure(0, weight=1)
+        self.schedule_checkbox = ctk.CTkCheckBox(
+            schedule_top,
+            text="Task schedule",
+            variable=self.schedule_enabled_var,
+            command=self.update_schedule_summary,
+        )
+        self.schedule_checkbox.grid(row=0, column=0, sticky="w")
+        self.schedule_button = ctk.CTkButton(
+            schedule_top,
+            text="Edit",
+            command=self.open_schedule_window,
+            width=72,
+            height=30,
+        )
+        self.schedule_button.grid(row=0, column=1, padx=(10, 0), sticky="e")
+        self.schedule_summary_label = ctk.CTkLabel(
+            schedule_box,
+            text="",
+            text_color="gray78",
+            anchor="w",
+            justify="left",
+            wraplength=360,
+        )
+        self.schedule_summary_label.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="ew")
+        self.update_schedule_summary()
 
         button_box = ctk.CTkFrame(controls, fg_color="transparent")
-        button_box.grid(row=6, column=0, columnspan=4, padx=12, pady=(4, 14), sticky="ew")
+        button_box.grid(row=6, column=0, columnspan=3, padx=12, pady=(2, 14), sticky="ew")
         button_box.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.open_browser_button = ctk.CTkButton(button_box, text="Open Browser", command=self.open_browser, height=38)
@@ -642,8 +839,8 @@ class PokeLikeBotGUI(ctk.CTk):
             text="Stop",
             command=self.stop_bot,
             state="disabled",
-            fg_color="#8a2424",
-            hover_color="#a52d2d",
+            fg_color="#173a63",
+            hover_color="#245181",
             height=38,
         )
         self.stop_button.grid(row=0, column=2, padx=(6, 0), sticky="ew")
@@ -668,6 +865,190 @@ class PokeLikeBotGUI(ctk.CTk):
         value_label = ctk.CTkLabel(box, text=value, font=ctk.CTkFont(size=18, weight="bold"))
         value_label.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="w")
         return value_label
+
+    def schedule_step_label(self, step):
+        target = step.get("target", RUN_TARGET_DAILY)
+        goal = step.get("goal", "Wins")
+        count = int(step.get("count", 1))
+        suffix = "win" if goal == "Wins" and count == 1 else goal.lower()
+        if goal == "Runs" and count == 1:
+            suffix = "run"
+        return f"{target} x{count} {suffix}"
+
+    def update_schedule_summary(self):
+        if not hasattr(self, "schedule_summary_label"):
+            return
+        if not self.schedule_enabled_var.get():
+            text = "Off"
+        else:
+            labels = [self.schedule_step_label(step) for step in self.task_schedule[:3]]
+            extra = len(self.task_schedule) - len(labels)
+            text = "  ->  ".join(labels)
+            if extra > 0:
+                text = f"{text}  (+{extra})"
+        self.schedule_summary_label.configure(text=text)
+
+    def open_schedule_window(self):
+        if self.schedule_window is not None and self.schedule_window.winfo_exists():
+            self.schedule_window.focus()
+            return
+
+        window = ctk.CTkToplevel(self)
+        window.title("Task schedule")
+        window.geometry("860x560")
+        window.minsize(760, 460)
+        window.grid_columnconfigure(0, weight=1)
+        window.grid_rowconfigure(2, weight=1)
+        self.schedule_window = window
+
+        header = ctk.CTkFrame(window, corner_radius=12)
+        header.grid(row=0, column=0, padx=16, pady=(16, 10), sticky="ew")
+        header.grid_columnconfigure(1, weight=1)
+        ctk.CTkCheckBox(
+            header,
+            text="Enable schedule",
+            variable=self.schedule_enabled_var,
+            command=self.update_schedule_summary,
+        ).grid(row=0, column=0, padx=12, pady=12, sticky="w")
+        ctk.CTkLabel(
+            header,
+            text="Each task advances when its win or run counter reaches the amount.",
+            text_color="gray72",
+            anchor="w",
+        ).grid(row=0, column=1, padx=(0, 12), pady=12, sticky="ew")
+
+        column_header = ctk.CTkFrame(window, fg_color="transparent")
+        column_header.grid(row=1, column=0, padx=18, pady=(0, 4), sticky="ew")
+        column_header.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(column_header, text="#", width=36, text_color="gray70").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(column_header, text="Run target", text_color="gray70").grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(column_header, text="Advance after", width=130, text_color="gray70").grid(row=0, column=2, sticky="w")
+        ctk.CTkLabel(column_header, text="Amount", width=90, text_color="gray70").grid(row=0, column=3, sticky="w")
+
+        list_frame = ctk.CTkScrollableFrame(window, corner_radius=12)
+        list_frame.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="nsew")
+        list_frame.grid_columnconfigure(1, weight=1)
+        row_vars = []
+
+        def sync_rows_from_widgets():
+            steps = []
+            for row in row_vars:
+                try:
+                    count = int(row["count"].get().strip())
+                except Exception:
+                    count = 1
+                steps.append({
+                    "target": row["target"].get(),
+                    "goal": row["goal"].get(),
+                    "count": max(1, min(count, 9999)),
+                })
+            return self.parse_task_schedule(steps, DEFAULT_TASK_SCHEDULE)
+
+        def redraw(rows=None):
+            for child in list_frame.winfo_children():
+                child.destroy()
+            row_vars.clear()
+            steps = rows if rows is not None else sync_rows_from_widgets()
+            for index, step in enumerate(steps):
+                target_var = ctk.StringVar(value=step["target"])
+                goal_var = ctk.StringVar(value=step["goal"])
+                count_var = ctk.StringVar(value=str(step["count"]))
+                row_vars.append({"target": target_var, "goal": goal_var, "count": count_var})
+
+                ctk.CTkLabel(list_frame, text=str(index + 1), width=36).grid(
+                    row=index, column=0, padx=(8, 6), pady=7, sticky="w"
+                )
+                ctk.CTkOptionMenu(
+                    list_frame,
+                    values=list(RUN_TARGET_OPTIONS),
+                    variable=target_var,
+                ).grid(row=index, column=1, padx=6, pady=7, sticky="ew")
+                ctk.CTkOptionMenu(
+                    list_frame,
+                    values=list(SCHEDULE_COMPLETION_OPTIONS),
+                    variable=goal_var,
+                    width=120,
+                ).grid(row=index, column=2, padx=6, pady=7, sticky="ew")
+                ctk.CTkEntry(list_frame, textvariable=count_var, width=76).grid(
+                    row=index, column=3, padx=6, pady=7, sticky="ew"
+                )
+                ctk.CTkButton(
+                    list_frame,
+                    text="Up",
+                    width=54,
+                    command=lambda i=index: move_row(i, -1),
+                ).grid(row=index, column=4, padx=(8, 3), pady=7)
+                ctk.CTkButton(
+                    list_frame,
+                    text="Down",
+                    width=62,
+                    command=lambda i=index: move_row(i, 1),
+                ).grid(row=index, column=5, padx=3, pady=7)
+                ctk.CTkButton(
+                    list_frame,
+                    text="Remove",
+                    width=74,
+                    fg_color="#7c2424",
+                    hover_color="#963030",
+                    command=lambda i=index: remove_row(i),
+                ).grid(row=index, column=6, padx=(3, 8), pady=7)
+
+        def move_row(index, direction):
+            steps = sync_rows_from_widgets()
+            new_index = index + direction
+            if new_index < 0 or new_index >= len(steps):
+                return
+            steps[index], steps[new_index] = steps[new_index], steps[index]
+            redraw(steps)
+
+        def remove_row(index):
+            steps = sync_rows_from_widgets()
+            if len(steps) <= 1:
+                return
+            del steps[index]
+            redraw(steps)
+
+        def add_row():
+            steps = sync_rows_from_widgets()
+            steps.append({"target": "Story Classic - Kanto", "goal": "Runs", "count": 1})
+            redraw(steps)
+
+        def reset_rows():
+            redraw([dict(step) for step in DEFAULT_TASK_SCHEDULE])
+
+        def apply_schedule():
+            self.task_schedule = sync_rows_from_widgets()
+            self.save_settings()
+            self.update_schedule_summary()
+            close_window()
+
+        def close_window():
+            self.schedule_window = None
+            window.destroy()
+
+        redraw([dict(step) for step in self.task_schedule])
+
+        button_row = ctk.CTkFrame(window, fg_color="transparent")
+        button_row.grid(row=3, column=0, padx=16, pady=(0, 16), sticky="ew")
+        button_row.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
+        ctk.CTkButton(button_row, text="Add task", command=add_row).grid(
+            row=0, column=0, padx=(0, 6), sticky="ew"
+        )
+        ctk.CTkButton(button_row, text="Reset default", command=reset_rows).grid(
+            row=0, column=1, padx=6, sticky="ew"
+        )
+        ctk.CTkButton(button_row, text="Save", command=apply_schedule).grid(
+            row=0, column=2, padx=6, sticky="ew"
+        )
+        ctk.CTkButton(button_row, text="Cancel", command=close_window).grid(
+            row=0, column=3, padx=6, sticky="ew"
+        )
+        ctk.CTkButton(
+            button_row,
+            text="Use now",
+            command=lambda: (self.schedule_enabled_var.set(True), apply_schedule()),
+        ).grid(row=0, column=4, padx=(6, 0), sticky="ew")
+        window.protocol("WM_DELETE_WINDOW", close_window)
 
     def open_priority_window(self):
         if self.priority_window is not None and self.priority_window.winfo_exists():
@@ -819,6 +1200,42 @@ class PokeLikeBotGUI(ctk.CTk):
         self.status_var.set(text)
         self.safe_ui(lambda: self.status_label.configure(text=text))
 
+    def start_update_check(self):
+        if not getattr(sys, "frozen", False):
+            self.log("Update check skipped in source mode.")
+            return
+        thread = threading.Thread(target=self.update_check_worker, daemon=True)
+        thread.start()
+
+    def update_check_worker(self):
+        try:
+            update_info = latest_release_update_info()
+            if not update_info:
+                self.log(f"No update available. Current version: {APP_VERSION}.")
+                return
+            version = update_info.get("version") or "latest"
+            self.log(f"Update available: {version}. Downloading...")
+            self.safe_ui(lambda: self.set_status(f"Updating to {version}"))
+            new_exe_path = download_update_asset(update_info)
+            self.safe_ui(lambda: self.install_update_and_exit(new_exe_path, version))
+        except Exception as exc:
+            self.log(f"Update check failed: {exc}")
+
+    def install_update_and_exit(self, new_exe_path, version):
+        self.log(f"Installing update {version}.")
+        self.set_status("Restarting update")
+        try:
+            launch_self_updater(new_exe_path)
+        except Exception as exc:
+            self.log(f"Could not launch updater: {exc}")
+            messagebox.showwarning(
+                APP_NAME,
+                f"Update {version} downloaded, but the updater could not start.\n\n{exc}",
+            )
+            self.set_status("Idle")
+            return
+        self.destroy()
+
     def format_runtime(self):
         if not self.start_time:
             return "00:00:00"
@@ -848,6 +1265,74 @@ class PokeLikeBotGUI(ctk.CTk):
         self.safe_ui(lambda: self.shinies_seen_label.configure(text=str(self.total_shinies_seen)))
         self.safe_ui(lambda: self.money_label.configure(text=str(self.total_money_earned)))
         self.safe_ui(lambda: self.money_per_hour_label.configure(text=self.format_money_per_hour()))
+
+    def active_schedule_target(self):
+        if not self.schedule_active or self.schedule_index >= len(self.task_schedule):
+            return None
+        return self.task_schedule[self.schedule_index].get("target")
+
+    def apply_active_schedule_target(self):
+        target = self.active_schedule_target()
+        if not target:
+            return False
+        if target != self.current_run_target:
+            self.current_run_target = target
+            self.run_target_var.set(target)
+            self.current_run_target_info = self.parse_run_target(target)
+            self.current_tower = self.current_run_target_info.get("name", target)
+            self.log(f"Schedule switched to: {target}")
+        return True
+
+    def result_screen_signature(self, screen):
+        try:
+            return self.driver.execute_script(
+                """
+                const active = document.querySelector('.screen.active') || document.body;
+                const text = (active.innerText || active.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
+                return `${arguments[0]}|${text}`;
+                """,
+                screen,
+            )
+        except Exception:
+            return f"{screen}|{time.time():.3f}"
+
+    def update_schedule_after_result(self, won, screen):
+        if not self.schedule_active:
+            return "continue"
+        if self.schedule_index >= len(self.task_schedule):
+            self.stop_event.set()
+            return "done"
+
+        signature = self.result_screen_signature(screen)
+        if signature == self.schedule_result_signature:
+            return "duplicate"
+        self.schedule_result_signature = signature
+
+        step = self.task_schedule[self.schedule_index]
+        goal = step.get("goal", "Wins")
+        should_count = goal == "Runs" or (goal == "Wins" and won)
+        if should_count:
+            self.schedule_progress[self.schedule_index] += 1
+        progress = self.schedule_progress[self.schedule_index]
+        needed = int(step.get("count", 1))
+        self.log(
+            f"Schedule task {self.schedule_index + 1}/{len(self.task_schedule)} "
+            f"{step.get('target')}: {progress}/{needed} {goal.lower()}."
+        )
+
+        if progress < needed:
+            return "continue"
+
+        self.schedule_index += 1
+        self.schedule_result_signature = None
+        if self.schedule_index >= len(self.task_schedule):
+            self.set_status("Schedule done")
+            self.log("Task schedule completed.")
+            self.stop_event.set()
+            return "done"
+
+        self.apply_active_schedule_target()
+        return "advance"
 
     def open_browser(self):
         if self.open_browser_thread and self.open_browser_thread.is_alive():
@@ -957,13 +1442,21 @@ class PokeLikeBotGUI(ctk.CTk):
         self.last_item_signature = None
         self.last_money_signature = None
         self.catch_reroll_used = False
+        self.schedule_active = bool(self.schedule_enabled_var.get())
+        self.schedule_index = 0
+        self.schedule_progress = [0 for _ in self.task_schedule]
+        self.schedule_result_signature = None
         self.pending_passive_item_name = ""
         self.pending_passive_item_priority = None
         self.start_time = time.time()
         self.stop_event.clear()
         self.current_mode = selected_mode
         self.manual_first_attempt = bool(self.manual_start_var.get())
-        self.current_run_target = self.run_target_var.get()
+        if self.schedule_active:
+            self.browser_count_var.set("1")
+            self.log("Task schedule enabled; using one browser so tasks advance in order.")
+        self.current_run_target = self.active_schedule_target() or self.run_target_var.get()
+        self.run_target_var.set(self.current_run_target)
         self.current_run_target_info = self.parse_run_target(self.current_run_target)
         self.current_tower = self.current_run_target_info.get("name", self.current_run_target)
         self.current_starter_name = (self.starter_var.get().strip() or STARTER_NAME).lower()
@@ -980,6 +1473,8 @@ class PokeLikeBotGUI(ctk.CTk):
         self.mode_selector.configure(state="disabled")
         self.manual_start_checkbox.configure(state="disabled")
         self.run_target_selector.configure(state="disabled")
+        self.schedule_checkbox.configure(state="disabled")
+        self.schedule_button.configure(state="disabled")
         self.priority_button.configure(state="disabled")
         self.starter_entry.configure(state="disabled")
         self.target_pokemon_entry.configure(state="disabled")
@@ -1008,6 +1503,8 @@ class PokeLikeBotGUI(ctk.CTk):
         self.safe_ui(lambda: self.mode_selector.configure(state="normal"))
         self.safe_ui(lambda: self.manual_start_checkbox.configure(state="normal"))
         self.safe_ui(lambda: self.run_target_selector.configure(state="normal"))
+        self.safe_ui(lambda: self.schedule_checkbox.configure(state="normal"))
+        self.safe_ui(lambda: self.schedule_button.configure(state="normal"))
         self.safe_ui(lambda: self.priority_button.configure(state="normal"))
         self.safe_ui(lambda: self.starter_entry.configure(state="normal"))
         self.safe_ui(lambda: self.target_pokemon_entry.configure(state="normal"))
@@ -2309,6 +2806,7 @@ class PokeLikeBotGUI(ctk.CTk):
         return result
 
     def start_challenge_run(self):
+        self.apply_active_schedule_target()
         self.reset_current_run_if_needed()
 
         if (self.current_mode == MODE_SHINY_CHARM_REROLL or self.is_pokemon_reroll_mode()) and self.is_active_run_screen():
@@ -3234,6 +3732,41 @@ class PokeLikeBotGUI(ctk.CTk):
             return True
         return False
 
+    def click_home_if_visible(self):
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+            const buttons = [...document.querySelectorAll('button, [role="button"], a')]
+                .filter(visible);
+            const button = buttons.find(btn => {
+                const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                const id = (btn.id || '').toLowerCase();
+                return id === 'btn-home'
+                    || id === 'btn-stage-home'
+                    || id === 'btn-title'
+                    || text === 'home'
+                    || text.includes('back home')
+                    || text.includes('main menu');
+            });
+            if (!button) return {clicked: false};
+            button.scrollIntoView({block: 'center', inline: 'center'});
+            button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+            button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+            button.click();
+            button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+            button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            return {clicked: true, text: (button.innerText || button.textContent || '').trim()};
+            """
+        )
+        if result.get("clicked"):
+            self.log(f"Clicked {result.get('text') or 'Home'}.")
+            time.sleep(0.8)
+            return True
+        return False
+
     def click_item_index(self, index):
         elements = [
             element
@@ -3915,6 +4448,16 @@ class PokeLikeBotGUI(ctk.CTk):
                 button = [...document.querySelectorAll('button[data-tutor]')].find(visible) || null;
                 row = button ? button.closest('.equip-pokemon-row') : row;
             }
+            if (!button && rows.length && skipButton) {
+                const allRowsMastered = rows.every(candidate => {
+                    const text = (candidate.innerText || candidate.textContent || '').toLowerCase();
+                    return text.includes('already mastered') || text.includes('(mastered)');
+                });
+                if (allRowsMastered) {
+                    click(skipButton);
+                    return {clicked: true, skipped: true, reason: 'all Pokemon already mastered', text: (skipButton.innerText || skipButton.textContent || '').trim()};
+                }
+            }
             if (!button) return {clicked: false};
             const pokemon = row?.querySelector('.equip-poke-name')?.innerText || '';
             const move = button.innerText || '';
@@ -3929,7 +4472,8 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         if result.get("clicked"):
             if result.get("skipped"):
-                self.log(f"Move tutor/TM skipped: main Pokemon already has {MAIN_MOVE_TARGET_USES} move upgrade(s).")
+                reason = result.get("reason") or f"main Pokemon already has {MAIN_MOVE_TARGET_USES} move upgrade(s)"
+                self.log(f"Move tutor/TM skipped: {reason}.")
                 return True
             if self.current_mode == MODE_FULL_RUN and self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES:
                 self.main_move_upgrades_used += 1
@@ -4411,7 +4955,11 @@ class PokeLikeBotGUI(ctk.CTk):
 
         if self.current_mode == MODE_FULL_RUN:
             self.record_money_earned_if_visible()
-        if self.current_mode == MODE_FULL_RUN and self.click_play_again_if_visible():
+        if (
+            self.current_mode == MODE_FULL_RUN
+            and screen not in ["gameover-screen", "win-screen"]
+            and self.click_play_again_if_visible()
+        ):
             return False
 
         if self.handle_evolution_choice():
@@ -4576,6 +5124,14 @@ class PokeLikeBotGUI(ctk.CTk):
 
         if screen == "gameover-screen":
             self.record_money_earned_if_visible()
+            schedule_action = self.update_schedule_after_result(False, screen)
+            if schedule_action == "done":
+                return False
+            if schedule_action == "advance":
+                if self.click_home_if_visible():
+                    self.restart_attempt = True
+                    return False
+                raise RuntimeError("Schedule needs the next task, but Home was not available on the result screen.")
             if self.click_play_again_if_visible():
                 return False
             if self.is_pokemon_reroll_mode():
@@ -4586,6 +5142,14 @@ class PokeLikeBotGUI(ctk.CTk):
 
         if screen == "win-screen":
             self.record_money_earned_if_visible()
+            schedule_action = self.update_schedule_after_result(True, screen)
+            if schedule_action == "done":
+                return False
+            if schedule_action == "advance":
+                if self.click_home_if_visible():
+                    self.restart_attempt = True
+                    return False
+                raise RuntimeError("Schedule needs the next task, but Home was not available on the result screen.")
             if self.click_play_again_if_visible():
                 return False
             if self.is_pokemon_reroll_mode():

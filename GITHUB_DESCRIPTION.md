@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/readme-banner.svg" alt="PokeLike Bot - star and watch the repository" width="100%">
+  <img src="https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/readme-banner.png" alt="PokeLike Bot - star and watch the repository" width="100%">
 </p>
 
 <h1 align="center">PokeLike Bot</h1>
@@ -25,7 +25,6 @@ If this bot helps you, please give the repository a star and watch it for update
 Download the latest Windows executable from the Releases page:
 
 - `PokeLike Bot.exe`
-- `PokeLikeBotSetup.exe` if you prefer the installer and it is available
 
 ![PokeLike Bot desktop GUI](https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/pokelike-bot-screenshot.png)
 

@@ -20,6 +20,11 @@ if (-not (Test-Path ".venv")) {
 
 Invoke-Checked { & ".\.venv\Scripts\python.exe" -m pip install --upgrade pip }
 Invoke-Checked { & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt }
+
+if (Test-Path "build\PokeLikeBot") {
+    & attrib -R "build\PokeLikeBot\*" /S /D
+}
+
 Invoke-Checked { & ".\.venv\Scripts\python.exe" -m PyInstaller --clean PokeLikeBot.spec }
 
 Write-Host ""

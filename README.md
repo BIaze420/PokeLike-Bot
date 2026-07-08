@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="PokeLike Bot - star and watch the repository" width="100%">
+  <img src="assets/readme-banner.png" alt="PokeLike Bot - star and watch the repository" width="100%">
 </p>
 
 <h1 align="center">PokeLike Bot</h1>
@@ -33,7 +33,6 @@ For normal users, the packaged `.exe` is the easiest option:
 From the latest release, download:
 
 - `PokeLike Bot.exe`
-- `PokeLikeBotSetup.exe` if you prefer the installer and it is available
 
 ## Quick Start
 
@@ -49,6 +48,7 @@ From the latest release, download:
 
 - Automates full runs, shiny rerolls, Pokemon whitelist rerolls, and item choices.
 - Supports Story, Battle Tower, Challenge, Weekly, and Daily targets.
+- Includes a task schedule for chaining daily, weekly, and repeated achievement runs.
 - Tracks run stats including shinies seen, Pokegold, and Pokegold per hour.
 - Can open and tile multiple Chrome windows for faster parallel sessions.
 - Uses editable priority lists for items, Pokemon choices, and reward handling.
@@ -62,6 +62,7 @@ From the latest release, download:
   - Shiny Pokemon reroll
   - Normal Pokemon reroll
 - **Run target selection** for Challenge Mode, Weekly Challenge, Daily Challenge, Battle Tower regions, and Story regions.
+- **Task schedule** for running a sequence of goals, such as Daily Challenge until one win, Weekly Challenge until one win, then Kanto Classic 100 times for achievements.
 - **Starter selection** with a configurable starter field.
 - **Pokemon whitelist** used by Pokemon reroll modes and full-run catch priority.
 - **Multi-browser support** with configurable browser count.
@@ -84,8 +85,17 @@ From the latest release, download:
 - **Move tutor / TM handling** with a quota for the main Pokemon in full-run mode.
 - **Team replacement policy** for shiny, legendary, and priority Pokemon rewards.
 - **End-screen handling** for Play Again / retry flows.
+- **Startup update check** in the packaged `.exe` that downloads and restarts into a newer GitHub release when one is available.
 - **Live money tracking** with Pokegold per hour.
 - **Branded Lunatic Labs header** with bundled logo assets and Windows icon.
+
+## Task Schedule
+
+The task schedule lets full-run mode chain multiple goals without manually changing the run target between sessions.
+
+Open `Edit schedule` in the GUI to choose each run target, whether the task advances after `Wins` or total `Runs`, and the amount needed. The default schedule runs Daily Challenge until one win, Weekly Challenge until one win, then Story Classic - Kanto for 100 runs.
+
+When the schedule is enabled, the bot uses one browser so the tasks advance in order. After a scheduled task is complete, the bot returns home, switches to the next target, and continues automatically. When the final task is complete, the bot stops with `Schedule done`.
 
 ## Pokemon And Item Logic
 
@@ -194,24 +204,6 @@ The executable will be created at:
 dist\PokeLike Bot.exe
 ```
 
-## Building The Installer
-
-1. Build the executable first:
-
-```powershell
-.\build_exe.ps1
-```
-
-2. Install [Inno Setup](https://jrsoftware.org/isinfo.php).
-3. Open `installer.iss` in Inno Setup Compiler.
-4. Compile it.
-
-The installer output will be created in:
-
-```text
-PokeLikeBotInstaller\PokeLikeBotSetup.exe
-```
-
 ## Data Storage
 
 When running from source, settings are stored next to `main.py`.
@@ -235,7 +227,7 @@ This repository includes a GitHub Actions workflow:
 It builds the Windows executable when:
 
 - You manually run the workflow.
-- You push a version tag like `v1.0.0`.
+- You push a version tag like `v1.0.2`.
 
 ## Disclaimer
 
