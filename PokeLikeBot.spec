@@ -9,6 +9,8 @@ datas = [
     ("assets/lunaticlabs_banner.png", "assets"),
     ("assets/lunaticlabs_logo_transp.png", "assets"),
     ("assets/favicon.ico", "assets"),
+    ("assets/discord_logo.png", "assets"),
+    ("assets/website_globe.png", "assets"),
 ]
 datas += collect_data_files("customtkinter")
 
