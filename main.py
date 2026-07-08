@@ -26,7 +26,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_NAME = "PokeLike Bot"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 UPDATE_REPO = "BIaze420/PokeLike-Bot"
 UPDATE_API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 UPDATE_ASSET_NAMES = ("PokeLike Bot.exe", "PokeLike.Bot.exe")
@@ -106,6 +106,103 @@ KNOWN_PASSIVE_ITEMS = (
     "tiny mushroom", "toxic orb", "toxic plate", "wacan berry", "weakness policy",
     "wise glasses", "yache berry",
 )
+DEFAULT_PASSIVE_ITEM_DETAILS = {
+    "adrenaline orb": "The Pokemon with more Speed gains extra power.",
+    "air balloon": "Flying Pokemon can dodge incoming damage.",
+    "aspear berry": "When your Pokemon heals, it gains extra value from the heal.",
+    "big mushroom": "When a Grass Pokemon heals, it gains an additional bonus.",
+    "big root": "Your Pokemon heal for part of all damage inflicted.",
+    "binding band": "Party slot 1 gains part of your team's power.",
+    "black belt": "+35% ATK / +35% DEF.",
+    "black sludge": "When an enemy faints, your active Pokemon gains poison-based value.",
+    "body plate": "Normal Pokemon deal extra damage based on their bulk.",
+    "bright powder": "Normal Pokemon get extra dodge or avoidance value.",
+    "casteliacone": "On-hit effects against enemies are improved.",
+    "cleanse tag": "Your Pokemon deal extra damage per level.",
+    "coba berry": "Your Pokemon deal extra damage per positive stat stage.",
+    "colbur berry": "+10% crit chance.",
+    "comet shard": "On pickup, replace your team with special Pokemon.",
+    "custap berry": "When a Rock Pokemon faints, it triggers a team benefit.",
+    "damp rock": "Deal extra damage per negative stat stage on the enemy.",
+    "dark stone": "Excessive damage from Dark Pokemon splashes onward.",
+    "destiny knot": "When a Pokemon gains ATK, related stats can also improve.",
+    "dragon scale": "The first Dragon Pokemon to act gains a strong bonus.",
+    "eject button": "When the enemy active faints, your team gains momentum.",
+    "eject pack": "Damage your active Pokemon takes is redirected or reduced.",
+    "flame plate": "Fire Pokemon benefit more from attack and special attack boosts.",
+    "float stone": "If you are faster, on-hit attacks deal extra damage.",
+    "focus sash": "Each Pokemon survives a KO once per run or fight.",
+    "grassy seed": "At fight start, Grass Pokemon gain defensive boosts.",
+    "haban berry": "When a Dragon Pokemon defeats an enemy, it gains a bonus.",
+    "hazard lens": "Your non-attack damage, splash, and hazards are stronger.",
+    "heat rock": "Fire Pokemon share part of their ATK and Sp. ATK.",
+    "hp up": "When your Pokemon defeats an enemy, it gains max HP.",
+    "insect plate": "When a Bug Pokemon crits, it triggers extra value.",
+    "iron ball": "Enemies deal less damage for each Speed difference or stage.",
+    "iron plate": "Your Pokemon take less damage if Steel traits apply.",
+    "iron thorns": "Enemy Pokemon take recoil damage based on their attacks.",
+    "kebia berry": "Your Pokemon take less damage from poison-related effects.",
+    "lagging tail": "If your Pokemon is slower, it gains a damage benefit.",
+    "lansat berry": "Psychic splash damage can crit.",
+    "lead sparkle": "At the start of combat, your lead Pokemon gains a bonus.",
+    "leaf stone": "Grass Pokemon deal damage based on enemy max HP.",
+    "legend aegis": "Your Pokemon take less damage for legendary synergy.",
+    "legend lure": "From now on, every catch node becomes legendary-focused.",
+    "legend might": "Your Pokemon deal more damage for legendary synergy.",
+    "legend s call": "On pickup, replace your team with legendary Pokemon.",
+    "life orb": "Your Pokemon deal more damage but take recoil.",
+    "light clay": "Your Pokemon deal extra damage for each shield or defensive effect.",
+    "lucky punch": "On KO, Normal Pokemon gain crit-related value.",
+    "lum berry": "Your Pokemon get two random stat boosts.",
+    "luminous moss": "When a Water Pokemon is hit, it gains a benefit.",
+    "macho brace": "Your Pokemon deal half damage but attack twice.",
+    "metal coat": "Damage blocked by Steel traits is reflected.",
+    "metal powder": "Your Pokemon are faster.",
+    "mirror herb": "When you debuff the enemy active, you gain matching value.",
+    "muscle band": "+10% crit chance; crits can raise attack value.",
+    "never melt ice": "Frozen shatter damage is improved.",
+    "occa berry": "Fire Pokemon gain ATK and Sp. ATK.",
+    "oran berry": "+10% crit chance; healing benefits from damage dealt.",
+    "pecha berry": "Poison Pokemon heal from poison-related effects.",
+    "poison barb": "Your attacks apply poison stacks.",
+    "power bracer": "Your Pokemon deal more damage.",
+    "power lens": "Your stat boosts are more effective.",
+    "pretty feather": "When a Flying Pokemon acts, it gains extra value.",
+    "pretty wing": "Your Pokemon deal less damage but gain a defensive benefit.",
+    "protector": "Your Pokemon deal extra damage per positive defensive stage.",
+    "pure incense": "Deal extra damage per held item slot or item count.",
+    "quick claw": "Your Pokemon gain a Speed stage at fight start.",
+    "quick powder": "The first Pokemon in your party gains a speed-focused bonus.",
+    "razor claw": "+35% crit chance; excess crit chance becomes value.",
+    "razor fang": "+10% crit chance; crits can trigger extra effects.",
+    "reaper cloth": "Once per fight, Ghost Pokemon trigger a survival or damage effect.",
+    "resonance": "Legendary Pokemon count twice for traits.",
+    "revival herb": "Your Pokemon cannot heal, but gain a strong compensation bonus.",
+    "ring target": "All moves are treated as neutrally effective.",
+    "rock incense": "Rock Pokemon benefit more from defensive stats.",
+    "rocky helmet": "When your Pokemon takes damage, enemies take recoil.",
+    "shed shell": "Bug Pokemon attacks reduce enemy stats.",
+    "shiny guard": "Your Pokemon take less damage for shiny synergy.",
+    "shiny hunter": "Your shiny rate is doubled for the rest of the run.",
+    "shiny power": "Your Pokemon deal extra damage for shiny synergy.",
+    "shoal salt": "Normal Pokemon heal max HP each turn or trigger.",
+    "sitrus berry": "All healing on your Pokemon is improved.",
+    "sky plate": "Flying Pokemon deal bonus damage based on Speed.",
+    "smoke ball": "Enemy Pokemon take extra damage from status or hazards.",
+    "smooth rock": "When a Ground Pokemon defeats an enemy, it gains a bonus.",
+    "soothe bell": "Start-of-fight traits and effects are improved.",
+    "star piece": "After every boss, replace your team with special options.",
+    "stardust": "Your Pokemon have a chance to level up after combat.",
+    "stealth goggles": "Dark Pokemon gain extra value from stealth or status.",
+    "sticky barb": "Pokemon you hit get a random stat reduction.",
+    "tanga berry": "When a Bug Pokemon faints, your team gains a benefit.",
+    "tiny mushroom": "Grass Pokemon use spore-related effects.",
+    "toxic orb": "When a poisoned Pokemon faints, poison effects spread.",
+    "toxic plate": "Poison Pokemon hitting poisoned targets trigger extra damage.",
+    "weakness policy": "Taking super-effective damage grants a damage boost.",
+    "wise glasses": "+35% Sp. ATK / +35% Sp. DEF.",
+    "yache berry": "Pokemon get a random stat boost.",
+}
 CONSUMABLE_ITEM_ALIASES = ("rare candy", "tm")
 MAIN_MOVE_TARGET_USES = 2
 LEGENDARY_POKEMON_NAMES = {
@@ -813,14 +910,18 @@ class PokeLikeBotGUI(ctk.CTk):
         return f"{display} [{detail}]" if detail else display
 
     def load_passive_item_details(self):
+        details = {
+            self.normalize_item_name(name): self.clean_item_detail(detail, name)
+            for name, detail in DEFAULT_PASSIVE_ITEM_DETAILS.items()
+            if self.normalize_item_name(name) and self.clean_item_detail(detail, name)
+        }
         try:
             with open(PASSIVE_ITEM_DETAILS_PATH, "r", encoding="utf-8") as details_file:
                 data = json.load(details_file)
         except Exception:
-            return {}
+            return details
         if not isinstance(data, dict):
-            return {}
-        details = {}
+            return details
         for name, detail in data.items():
             normalized = self.normalize_item_name(name)
             cleaned = self.clean_item_detail(detail, normalized)
@@ -1210,6 +1311,16 @@ class PokeLikeBotGUI(ctk.CTk):
             if isinstance(entry, dict)
         ]
         return (max(numbers) if numbers else 0) + 1
+
+    def reserve_run_history_number(self):
+        with self.run_history_lock:
+            self.next_history_run_number = max(
+                int(self.next_history_run_number or 1),
+                self.next_run_history_number(),
+            )
+            run_number = self.next_history_run_number
+            self.next_history_run_number += 1
+            return run_number
 
     def last_run_history_wallet_total(self):
         for entry in reversed(getattr(self, "run_history", []) or []):
@@ -3825,7 +3936,13 @@ class PokeLikeBotGUI(ctk.CTk):
             const match = text.match(/([0-9][0-9.,]*)\\s*Pok/i);
             if (!match) return {found: true, amount: 0, text};
             const amount = parseInt(match[1].replace(/[^0-9]/g, ''), 10) || 0;
-            return {found: true, amount, text};
+            const lowerText = text.toLowerCase();
+            return {
+                found: true,
+                amount,
+                text,
+                isEarnedAmount: lowerText.includes('earned') || lowerText.includes('you got')
+            };
             """
         )
         if not result.get("found"):
@@ -3834,13 +3951,25 @@ class PokeLikeBotGUI(ctk.CTk):
         if signature == self.last_money_signature:
             return
         self.last_money_signature = signature
-        wallet_total = int(result.get("amount") or 0)
-        previous_wallet_total = self.last_wallet_pokegold_total
-        if previous_wallet_total is None or wallet_total < previous_wallet_total:
-            amount = wallet_total
+        observed_amount = int(result.get("amount") or 0)
+        if result.get("isEarnedAmount"):
+            amount = observed_amount
+            wallet_total = (
+                int(self.last_wallet_pokegold_total or 0) + amount
+                if self.last_wallet_pokegold_total is not None
+                else None
+            )
         else:
-            amount = wallet_total - previous_wallet_total
-        self.last_wallet_pokegold_total = wallet_total
+            wallet_total = observed_amount
+            previous_wallet_total = self.last_wallet_pokegold_total
+            if previous_wallet_total is None:
+                amount = 0
+            elif wallet_total < previous_wallet_total:
+                amount = wallet_total
+            else:
+                amount = wallet_total - previous_wallet_total
+        if wallet_total is not None:
+            self.last_wallet_pokegold_total = wallet_total
         with self.stats_lock:
             self.total_money_earned += amount
             self.run_money_earned = int(self.run_money_earned or 0) + amount
@@ -3924,8 +4053,12 @@ class PokeLikeBotGUI(ctk.CTk):
             pokemon = list(self.last_team_snapshot or [])[:6]
         result_details = self.result_screen_details()
         passive_items = result_details.get("passiveItems") or self.last_passive_items_snapshot or []
+        run_number = self.current_history_run_number
+        if not run_number:
+            run_number = self.reserve_run_history_number()
+            self.current_history_run_number = run_number
         entry = {
-            "run": int(self.current_history_run_number or self.next_run_history_number()),
+            "run": int(run_number),
             "target": self.current_run_target,
             "result": "win" if won else "loss",
             "duration": int(time.time() - started_at),
@@ -5314,16 +5447,24 @@ class PokeLikeBotGUI(ctk.CTk):
                 el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
                 el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
             };
-            const rows = [...document.querySelectorAll('.equip-pokemon-row')].filter(visible);
-            const activeText = (document.querySelector('.screen.active')?.innerText || document.body.innerText || '').toLowerCase();
+            const modal = document.querySelector('#item-equip-modal');
+            const modalText = (modal?.innerText || modal?.textContent || '').toLowerCase();
+            const rows = [...document.querySelectorAll('#item-equip-modal .equip-pokemon-row, .equip-pokemon-row')]
+                .filter(visible);
+            const activeText = [
+                modalText,
+                document.querySelector('.screen.active')?.innerText || '',
+                document.body.innerText || ''
+            ].join('\\n').toLowerCase();
             const hasTutorContext = rows.some(row => !!row.querySelector('button[data-tutor]'))
                 || !!document.querySelector('button[data-tutor]')
+                || !!document.querySelector('#btn-skip-tutor')
                 || activeText.includes('move tutor')
                 || activeText.includes('teach')
                 || activeText.includes('learn move')
                 || activeText.includes('tm ');
             if (!hasTutorContext) return {clicked: false};
-            const skipButton = [...document.querySelectorAll('button, [role="button"]')]
+            const skipButton = [...document.querySelectorAll('#btn-skip-tutor, button, [role="button"]')]
                 .filter(visible)
                 .find(btn => {
                     const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
@@ -5408,11 +5549,18 @@ class PokeLikeBotGUI(ctk.CTk):
             if (active?.id && active.id !== 'item-screen' && active.id !== 'elite-prep-screen') {
                 return {clicked: false};
             }
-            const rows = [...document.querySelectorAll('.equip-pokemon-row')].filter(visible);
+            const modal = document.querySelector('#item-equip-modal');
+            const rows = [...document.querySelectorAll('#item-equip-modal .equip-pokemon-row, .equip-pokemon-row')]
+                .filter(visible);
             if (!rows.length) return {clicked: false};
-            const activeText = (active?.innerText || document.body.innerText || '').toLowerCase();
+            const activeText = [
+                modal?.innerText || modal?.textContent || '',
+                active?.innerText || '',
+                document.body.innerText || ''
+            ].join('\\n').toLowerCase();
             const hasTutorContext = rows.some(row => !!row.querySelector('button[data-tutor]'))
                 || !!document.querySelector('button[data-tutor]')
+                || !!document.querySelector('#btn-skip-tutor')
                 || activeText.includes('move tutor')
                 || activeText.includes('teach')
                 || activeText.includes('learn move')
@@ -6082,8 +6230,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.run_started_at = time.time()
         self.run_money_earned = 0
         self.run_history_signature = None
-        self.current_history_run_number = self.next_history_run_number
-        self.next_history_run_number += 1
+        self.current_history_run_number = self.reserve_run_history_number()
         self.maps_reached = 0
         self.maps_started = 0
         self.run_legendaries_seen = 0

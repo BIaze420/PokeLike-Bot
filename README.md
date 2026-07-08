@@ -42,20 +42,21 @@ From the latest release, download:
 4. Choose a mode, starter, run target, and browser count.
 5. Click `Start Bot`.
 
-![PokeLike Bot desktop GUI](assets/pokelike-bot-screenshot.png)
+![PokeLike Bot desktop GUI](assets/readme-main-gui.png)
 
 ## Why Use It?
 
 - Automates full runs, shiny rerolls, Pokemon whitelist rerolls, and item choices.
 - Supports Story, Battle Tower, Challenge, Weekly, and Daily targets.
 - Includes a task schedule for chaining daily, weekly, and repeated achievement runs.
-- Tracks run stats including shinies seen, Pokegold, and Pokegold per hour.
+- Tracks run stats including leaders / Elite Four progress, encounters, legendaries, shinies seen, Pokegold, and Pokegold per hour.
+- Saves run history with duration, earned Pokegold, score, passives, and team snapshots.
 - Can open and tile multiple Chrome windows for faster parallel sessions.
 - Uses editable priority lists for items, Pokemon choices, and reward handling.
 
 ## Features
 
-- **Graphical control panel** with run status, runtime, run count, item rolls checked, encounters checked, target encounters, shinies seen, Pokegold, and Pokegold per hour.
+- **Graphical control panel** with run status, runtime, run count, leaders / Elite Four progress, encounters checked, legendaries, shinies seen, Pokegold, and Pokegold per hour.
 - **Multiple run modes**:
   - Full run
   - Shiny Charm reroll
@@ -63,6 +64,7 @@ From the latest release, download:
   - Normal Pokemon reroll
 - **Run target selection** for Challenge Mode, Weekly Challenge, Daily Challenge, Battle Tower regions, and Story regions.
 - **Task schedule** for running a sequence of goals, such as Daily Challenge until one win, Weekly Challenge until one win, then Kanto Classic 100 times for achievements.
+- **Run history** for the last runs, including runtime, earned Pokegold, score, team snapshot, passive items, legendary encounters, and progress stats.
 - **Starter selection** with a configurable starter field.
 - **Pokemon whitelist** used by Pokemon reroll modes and full-run catch priority.
 - **Multi-browser support** with configurable browser count.
@@ -73,6 +75,7 @@ From the latest release, download:
 - **Item priority editor** for starting/passive items and regular reward items.
 - **Full-run item automation** with separate starting/passive item priority and regular reward priority.
 - **Starting-item ignore list** for items that should never be picked at the passive/starting item screen.
+- **Passive item effect display** with built-in known item effects plus local learning for newly discovered item text.
 - **Unknown starting item tracking** to help improve the item priority list over time.
 - **Catch priority logic** for full runs:
   - Prioritizes shiny Pokemon.
@@ -94,6 +97,8 @@ From the latest release, download:
 The task schedule lets full-run mode chain multiple goals without manually changing the run target between sessions.
 
 Open `Edit schedule` in the GUI to choose each run target, whether the task advances after `Wins` or total `Runs`, and the amount needed. The default schedule runs Daily Challenge until one win, Weekly Challenge until one win, then Story Classic - Kanto for 100 runs.
+
+![Task schedule window](assets/readme-task-schedule.png)
 
 When the schedule is enabled, the bot uses one browser so the tasks advance in order. After a scheduled task is complete, the bot returns home, switches to the next target, and continues automatically. When the final task is complete, the bot stops with `Schedule done`.
 
@@ -135,7 +140,7 @@ Starting and passive items use their own priority list, separate from normal rew
 - Black Belt
 - Wise Glasses
 
-The bot also has a starting/passive never-pick list and records unknown starting items locally so priority rules can be improved over time.
+The bot also has a starting/passive never-pick list and records unknown starting items locally so priority rules can be improved over time. Known passive items include built-in effect text in the priority editor, and newly discovered effect text is still learned locally.
 
 ### Regular Reward Item Logic
 
