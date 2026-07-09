@@ -94,13 +94,13 @@ From the latest release, download:
 
 ## Task Schedule
 
-The task schedule lets full-run mode chain multiple goals without manually changing the run target between sessions. It is useful for daily/weekly cleanup and long achievement grinds because each row has its own run target, completion type, and amount.
+The task schedule lets full-run mode chain several goals without manually changing the run target after each run.
 
-Open `Edit schedule` in the GUI to add, remove, reorder, and save tasks. Each task can advance after a number of `Wins` or total `Runs`; the default schedule runs Daily Challenge until one win, Weekly Challenge until one win, then Story Classic - Kanto for 100 runs.
+Each row has a run target, an advance condition (`Wins` or `Runs`), and an amount. For example, the bot can finish one Daily Challenge win, then one Weekly Challenge win, then continue Story Classic - Kanto for achievement farming.
 
 ![Task schedule window](assets/readme-task-schedule.png)
 
-When the schedule is enabled, the bot uses one browser so tasks advance in order. After a task reaches its target, the bot returns home, switches to the next run target, and continues automatically. When the final task is complete, the bot stops with `Schedule done`.
+When the schedule is enabled, the bot uses one browser, advances tasks in order, and stops after the final task is complete.
 
 ## Pokemon And Item Logic
 
