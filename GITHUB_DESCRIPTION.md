@@ -26,12 +26,13 @@ Download the latest Windows executable from the Releases page:
 
 - `PokeLike Bot.exe`
 
-![PokeLike Bot desktop GUI](https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/pokelike-bot-screenshot.png)
+![PokeLike Bot desktop GUI](https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/readme-main-gui.png)
 
 ## Main Features
 
 - Desktop GUI with live status, runtime, run count, item rolls checked, encounters checked, target encounters, shinies seen, Pokegold, and Pokegold per hour.
 - Full run automation for Challenge, Weekly, Daily, Battle Tower, and Story targets.
+- Task schedule for chaining daily, weekly, and repeated achievement runs.
 - Shiny Charm reroll mode.
 - Shiny Pokemon reroll mode.
 - Normal Pokemon reroll mode.
@@ -49,6 +50,12 @@ Download the latest Windows executable from the Releases page:
 - Reward and replacement policies for shiny, legendary, and priority Pokemon.
 - Play Again / retry handling on end screens.
 - Branded Lunatic Labs header and Windows app icon.
+
+## Task Schedule
+
+The task schedule can run multiple goals in order, such as Daily Challenge until one win, Weekly Challenge until one win, then Story Classic - Kanto for a chosen number of runs. Each task has a run target, an advance condition (`Wins` or `Runs`), and an amount.
+
+![Task schedule window](https://raw.githubusercontent.com/BIaze420/PokeLike-Bot/main/assets/readme-task-schedule.png)
 
 ## Logic Highlights
 

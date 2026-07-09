@@ -2232,6 +2232,11 @@ class PokeLikeBotGUI(ctk.CTk):
             self.log(f"Could not move broken Chrome profile {profile_path}: {exc}")
             return False
 
+    def recovery_profile_path_for_worker(self, worker_id):
+        suffix = "" if worker_id <= 1 else f"-{worker_id}"
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        return f"{SELENIUM_PROFILE_PATH}{suffix}.recovery-{timestamp}"
+
     def launch_driver(self, worker_id=1, make_active=True):
         self.ensure_worker_profile(worker_id)
         profile_path = self.profile_path_for_worker(worker_id)
@@ -2242,9 +2247,10 @@ class PokeLikeBotGUI(ctk.CTk):
         except Exception:
             headless = False
 
-        def build_options(safe=False):
+        def build_options(safe=False, active_profile_path=None):
+            active_profile_path = active_profile_path or profile_path
             o = webdriver.ChromeOptions()
-            o.add_argument(f"--user-data-dir={profile_path}")
+            o.add_argument(f"--user-data-dir={active_profile_path}")
             o.add_argument("--profile-directory=Default")
             o.add_argument("--no-first-run")
             o.add_argument("--no-default-browser-check")
@@ -2299,18 +2305,42 @@ class PokeLikeBotGUI(ctk.CTk):
             self.log("Chrome failed to start; retrying with minimal launch flags.")
             try:
                 driver = start_chrome(build_options(safe=True))
-            except Exception:
+            except Exception as safe_exc:
                 # 2) Still failing -> the profile is likely locked/corrupt: reset it.
-                if not self.quarantine_browser_profile(profile_path, worker_id):
-                    raise
-                os.makedirs(profile_path, exist_ok=True)
-                try:
-                    driver = start_chrome(build_options(safe=True))
-                except Exception as retry_exc:
-                    raise RuntimeError(
-                        f"Chrome still could not be opened after resetting the browser {worker_id} profile. "
-                        f"Original error: {first_exc}; retry error: {retry_exc}"
-                    ) from retry_exc
+                if self.quarantine_browser_profile(profile_path, worker_id):
+                    os.makedirs(profile_path, exist_ok=True)
+                    try:
+                        driver = start_chrome(build_options(safe=True))
+                    except Exception as retry_exc:
+                        recovery_profile_path = self.recovery_profile_path_for_worker(worker_id)
+                        os.makedirs(recovery_profile_path, exist_ok=True)
+                        self.log(
+                            f"Chrome still failed after profile reset; retrying browser {worker_id} "
+                            f"with clean recovery profile {recovery_profile_path}."
+                        )
+                        try:
+                            driver = start_chrome(build_options(safe=True, active_profile_path=recovery_profile_path))
+                        except Exception as recovery_exc:
+                            raise RuntimeError(
+                                f"Chrome still could not be opened after resetting the browser {worker_id} profile "
+                                f"and trying a clean recovery profile. Original error: {first_exc}; "
+                                f"reset retry error: {retry_exc}; recovery retry error: {recovery_exc}"
+                            ) from recovery_exc
+                else:
+                    recovery_profile_path = self.recovery_profile_path_for_worker(worker_id)
+                    os.makedirs(recovery_profile_path, exist_ok=True)
+                    self.log(
+                        f"Chrome profile for browser {worker_id} could not be reset; "
+                        f"retrying with clean recovery profile {recovery_profile_path}."
+                    )
+                    try:
+                        driver = start_chrome(build_options(safe=True, active_profile_path=recovery_profile_path))
+                    except Exception as recovery_exc:
+                        raise RuntimeError(
+                            f"Chrome still could not be opened after retrying browser {worker_id} "
+                            f"with minimal flags and a clean recovery profile. Original error: {first_exc}; "
+                            f"minimal-flags error: {safe_exc}; recovery retry error: {recovery_exc}"
+                        ) from recovery_exc
         wait = WebDriverWait(driver, 30)
         if make_active:
             self.driver = driver
@@ -4271,6 +4301,21 @@ class PokeLikeBotGUI(ctk.CTk):
                 if (normText.includes('legendary') || String(src || '').toLowerCase().includes('legendary')) return true;
                 return [...legendaryNames].some(legendary => normName === legendary || normText.includes(legendary));
             };
+            const clickElement = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const target = document.elementFromPoint(x, y) || el;
+                for (const clickTarget of [target, el]) {
+                    clickTarget.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, clientX: x, clientY: y}));
+                    clickTarget.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: x, clientY: y}));
+                    clickTarget.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: x, clientY: y}));
+                    clickTarget.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: x, clientY: y}));
+                    clickTarget.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, clientX: x, clientY: y}));
+                }
+                if (typeof el.click === 'function') el.click();
+            };
             const active = document.querySelector('.screen.active') || document;
             const addButton = [...active.querySelectorAll('#swap-choices button, #swap-choices [role="button"], button, [role="button"]')]
                 .filter(visible)
@@ -4279,12 +4324,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     return text.includes('add ') && text.includes(' to team');
                 });
             if (addButton) {
-                addButton.scrollIntoView({block: 'center', inline: 'center'});
-                addButton.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
-                addButton.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-                addButton.click();
-                addButton.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
-                addButton.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                clickElement(addButton);
                 return {clicked: true, addClicked: true, text: (addButton.innerText || addButton.textContent || '').trim(), policy};
             }
             const selectors = [
@@ -4300,6 +4340,7 @@ class PokeLikeBotGUI(ctk.CTk):
             for (const selector of selectors) {
                 for (const card of document.querySelectorAll(selector)) {
                     if (seen.has(card) || !visible(card)) continue;
+                    if (card.closest('#swap-incoming')) continue;
                     seen.add(card);
                     const img = card.querySelector('img.team-sprite, img.poke-sprite, img[src*="/pokemon/"]');
                     const text = (card.innerText || '').toLowerCase();
@@ -4323,6 +4364,15 @@ class PokeLikeBotGUI(ctk.CTk):
                     });
                 }
             }
+            const keepTeamButton = [...active.querySelectorAll('#btn-cancel-swap, button, [role="button"]')]
+                .filter(visible)
+                .find(btn => {
+                    const text = normalize(btn.innerText || btn.textContent || '');
+                    return btn.id === 'btn-cancel-swap'
+                        || text.includes('keep team as is')
+                        || text.includes('keep team')
+                        || text.includes('cancel swap');
+                });
             let selected = null;
             if (policy === 'legendary' || policy === 'legendary_shiny') {
                 // A non-shiny legendary only ever releases a non-shiny, non-legendary
@@ -4336,21 +4386,18 @@ class PokeLikeBotGUI(ctk.CTk):
             } else {
                 selected = candidates.find(candidate => !candidate.shiny) || (allowAny ? candidates[0] : null);
             }
-            if (!selected) return {clicked: false, count: candidates.length};
-            const card = selected.card;
-            card.scrollIntoView({block: 'center', inline: 'center'});
-            const rect = card.getBoundingClientRect();
-            const x = rect.left + rect.width / 2;
-            const y = rect.top + rect.height / 2;
-            const target = document.elementFromPoint(x, y) || card;
-            for (const el of [target, card]) {
-                el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: x, clientY: y}));
-                el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, clientX: x, clientY: y}));
+            if (!selected) {
+                if (!keepTeamButton) return {clicked: false, count: candidates.length, keepTeamMissing: true, policy};
+                clickElement(keepTeamButton);
+                return {
+                    clicked: true,
+                    keptTeam: true,
+                    count: candidates.length,
+                    text: (keepTeamButton.innerText || keepTeamButton.textContent || '').trim(),
+                    policy
+                };
             }
-            if (typeof card.click === 'function') card.click();
+            clickElement(selected.card);
             return {clicked: true, name: selected.name, shiny: selected.shiny, legendary: selected.legendary, policy};
             """,
             self.pending_replace_allow_any,
@@ -4361,6 +4408,13 @@ class PokeLikeBotGUI(ctk.CTk):
             return False
         if result.get("addClicked"):
             self.log(f"Team replace: clicked {result.get('text') or 'Add to team'}.")
+            time.sleep(0.6)
+            return True
+        if result.get("keptTeam"):
+            self.pending_team_replace = False
+            self.pending_replace_allow_any = False
+            self.pending_replace_policy = "default"
+            self.log(f"Team replace: kept team as-is ({result.get('policy') or 'default'} policy).")
             time.sleep(0.6)
             return True
         self.pending_team_replace = False
