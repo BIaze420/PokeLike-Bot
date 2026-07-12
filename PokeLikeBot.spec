@@ -11,6 +11,7 @@ datas = [
     ("assets/favicon.ico", "assets"),
     ("assets/discord_logo.png", "assets"),
     ("assets/website_globe.png", "assets"),
+    ("assets/github_logo.png", "assets"),
 ]
 datas += collect_data_files("customtkinter")
 

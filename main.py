@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_NAME = "PokeLike Bot"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 UPDATE_REPO = "BIaze420/PokeLike-Bot"
 UPDATE_API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 UPDATE_ASSET_NAMES = ("PokeLike Bot.exe", "PokeLike.Bot.exe")
@@ -40,11 +41,13 @@ DATA_DIR = (
 ASSETS_DIR = os.path.join(RESOURCE_DIR, "assets")
 BRAND_URL = "https://lunaticlabs.shop/"
 DISCORD_URL = "https://discord.gg/lunaticlabs"
+GITHUB_URL = "https://github.com/BIaze420/PokeLike-Bot"
 BANNER_IMAGE_PATH = os.path.join(ASSETS_DIR, "lunaticlabs_banner.png")
 FAVICON_IMAGE_PATH = os.path.join(ASSETS_DIR, "lunaticlabs_logo_transp.png")
 FAVICON_ICO_PATH = os.path.join(ASSETS_DIR, "favicon.ico")
 DISCORD_ICON_PATH = os.path.join(ASSETS_DIR, "discord_logo.png")
 WEBSITE_ICON_PATH = os.path.join(ASSETS_DIR, "website_globe.png")
+GITHUB_ICON_PATH = os.path.join(ASSETS_DIR, "github_logo.png")
 POKELIKE_URL = "https://pokelike.xyz/"
 # The Chrome profile MUST NOT live in a cloud-synced folder (OneDrive/Dropbox):
 # those services lock the profile files while Chrome is using them, which crashes
@@ -205,6 +208,11 @@ DEFAULT_PASSIVE_ITEM_DETAILS = {
 }
 CONSUMABLE_ITEM_ALIASES = ("rare candy", "tm")
 MAIN_MOVE_TARGET_USES = 2
+POKEMON_TYPE_NAMES = (
+    "normal", "fire", "water", "grass", "electric", "ice", "fighting",
+    "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
+    "dragon", "dark", "steel", "fairy",
+)
 LEGENDARY_POKEMON_NAMES = {
     "articuno", "zapdos", "moltres", "mewtwo", "mew",
     "raikou", "entei", "suicune", "lugia", "ho-oh", "celebi",
@@ -214,6 +222,25 @@ LEGENDARY_POKEMON_NAMES = {
     "victini", "cobalion", "terrakion", "virizion", "tornadus", "thundurus", "reshiram", "zekrom", "landorus",
     "kyurem", "keldeo", "meloetta", "genesect",
 }
+LEADER_OR_ELITE_TRAINER_NAMES = {
+    "brock", "misty", "lt surge", "surge", "erika", "koga", "sabrina", "blaine", "giovanni",
+    "lorelei", "bruno", "agatha", "lance", "blue", "red",
+    "falkner", "bugsy", "whitney", "morty", "chuck", "jasmine", "pryce", "clair", "will", "karen",
+    "roxanne", "brawly", "wattson", "flannery", "norman", "winona", "tate", "liza", "wallace",
+    "juan", "sidney", "phoebe", "glacia", "drake", "steven",
+    "roark", "gardenia", "maylene", "crasher wake", "wake", "fantina", "byron", "candice", "volkner",
+    "aaron", "bertha", "flint", "lucian", "cynthia", "cyrus",
+    "cilan", "chili", "cress", "lenora", "burgh", "elesa", "clay", "skyla", "brycen", "drayden", "iris",
+    "marlon", "shauntal", "marshal", "grimsley", "caitlin", "alder", "n", "ghetsis", "colress",
+    "viola", "grant", "korrina", "ramos", "clemont", "valerie", "olympia", "wulfric",
+    "malva", "siebold", "wikstrom", "drasna", "diantha", "lysandre",
+    "hala", "olivia", "nanu", "hapuu", "ilima", "lana", "kiawe", "mallow", "sophocles", "acerola", "mina",
+    "molayne", "kahili", "kukui", "lusamine", "guzma",
+    "milo", "nessa", "kabu", "bea", "allister", "opal", "bede", "gordie", "melony", "piers", "marnie",
+    "raihan", "leon", "rose", "oleana", "klara", "avery", "mustard", "peony",
+    "katy", "brassius", "iono", "kofu", "larry", "ryme", "tulip", "grusha",
+    "rika", "poppy", "hassel", "geeta", "nemona", "clavell", "penny", "arven", "sada", "turo",
+}
 MODE_FULL_RUN = "Full run"
 MODE_SHINY_CHARM_REROLL = "Shiny Charm reroll"
 MODE_SHINY_POKEMON_REROLL = "Shiny Pokemon reroll"
@@ -221,7 +248,7 @@ MODE_NORMAL_POKEMON_REROLL = "Normal Pokemon reroll"
 RUN_TARGET_CHALLENGE = "Challenge Mode"
 RUN_TARGET_WEEKLY = "Weekly Challenge"
 RUN_TARGET_DAILY = "Daily Challenge"
-TOWER_REGIONS = ("Kanto", "Johto", "Hoenn", "Sinnoh", "Unova")
+TOWER_REGIONS = ("Kanto", "Johto", "Hoenn", "Sinnoh", "Unova", "Kalos")
 STORY_REGIONS = ("Kanto", "Johto", "Hoenn")
 STORY_MODES = ("Classic", "Nuzlocke")
 RUN_TARGET_OPTIONS = (
@@ -377,6 +404,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.window_icon = None
         self.discord_icon = None
         self.website_icon = None
+        self.github_icon = None
         os.makedirs(DATA_DIR, exist_ok=True)
         self.load_brand_assets()
 
@@ -422,6 +450,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.last_team_snapshot = []
         self.last_passive_items_snapshot = []
         self.last_legendary_signature = None
+        self.last_leader_signature = None
         self.awaiting_leader_item_roll = False
         self.restart_attempt = False
         self.last_item_signature = None
@@ -444,8 +473,10 @@ class PokeLikeBotGUI(ctk.CTk):
         self.starter_var = ctk.StringVar(value=self.settings.get("starter", STARTER_NAME.title()))
         self.target_pokemon_var = ctk.StringVar(value=self.settings.get("shiny_whitelist", ""))
         self.browser_count_var = ctk.StringVar(value=str(self.settings.get("browser_count", 1)))
+        self.chrome_restart_minutes_var = ctk.StringVar(value=str(self.settings.get("chrome_restart_minutes", 0)))
         self.schedule_enabled_var = ctk.BooleanVar(value=bool(self.settings.get("schedule_enabled", False)))
         self.browser_count = 1
+        self.chrome_restart_minutes = 0.0
         self.current_run_target = RUN_TARGET_OPTIONS[0]
         self.current_run_target_info = self.parse_run_target(RUN_TARGET_OPTIONS[0])
         self.current_tower = "Challenge Mode"
@@ -459,6 +490,9 @@ class PokeLikeBotGUI(ctk.CTk):
         self.regular_item_priority = self.parse_priority_text(
             self.settings.get("regular_item_priority", ""),
             REGULAR_ITEM_PRIORITY,
+        )
+        self.regular_item_priority_by_starter = self.parse_starter_item_priority_map(
+            self.settings.get("regular_item_priority_by_starter", {})
         )
         self.starting_item_ignore = self.parse_priority_text(
             self.settings.get("starting_item_ignore", ""),
@@ -479,6 +513,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.schedule_index = 0
         self.schedule_progress = []
         self.schedule_result_signature = None
+        self.schedule_default_starter_name = STARTER_NAME
 
         self.build_gui()
         self.after(1000, self.start_update_check)
@@ -521,11 +556,24 @@ class PokeLikeBotGUI(ctk.CTk):
         except Exception:
             self.website_icon = None
 
+        try:
+            github = Image.open(GITHUB_ICON_PATH)
+            self.github_icon = ctk.CTkImage(
+                light_image=github,
+                dark_image=github,
+                size=(40, 40),
+            )
+        except Exception:
+            self.github_icon = None
+
     def open_brand_link(self, _event=None):
         webbrowser.open_new_tab(BRAND_URL)
 
     def open_discord_link(self):
         webbrowser.open_new_tab(DISCORD_URL)
+
+    def open_github_link(self):
+        webbrowser.open_new_tab(GITHUB_URL)
 
     def apply_window_icon(self, window):
         def set_icon():
@@ -794,9 +842,15 @@ class PokeLikeBotGUI(ctk.CTk):
             value = data.get(key)
             if isinstance(value, (str, list, tuple)):
                 settings[key] = value
+        starter_priorities = data.get("regular_item_priority_by_starter")
+        if isinstance(starter_priorities, dict):
+            settings["regular_item_priority_by_starter"] = starter_priorities
         browser_count = data.get("browser_count")
         if isinstance(browser_count, int) and browser_count > 0:
             settings["browser_count"] = min(browser_count, MAX_BROWSER_COUNT)
+        chrome_restart_minutes = data.get("chrome_restart_minutes")
+        if isinstance(chrome_restart_minutes, (int, float)) and chrome_restart_minutes >= 0:
+            settings["chrome_restart_minutes"] = min(float(chrome_restart_minutes), 1440.0)
         for key in ["manual_start", "headless", "schedule_enabled"]:
             value = data.get(key)
             if isinstance(value, bool):
@@ -851,7 +905,13 @@ class PokeLikeBotGUI(ctk.CTk):
                 count = int(item.get("count", 1))
             except Exception:
                 count = 1
-            steps.append({"target": target, "goal": goal, "count": max(1, min(count, 9999))})
+            starter = " ".join(str(item.get("starter") or "").strip().split())
+            steps.append({
+                "target": target,
+                "starter": starter,
+                "goal": goal,
+                "count": max(1, min(count, 9999)),
+            })
         return steps or [dict(step) for step in DEFAULT_TASK_SCHEDULE]
 
     def parse_priority_text(self, text, default_values):
@@ -871,6 +931,19 @@ class PokeLikeBotGUI(ctk.CTk):
             priorities.append(name)
         return priorities or list(default_values)
 
+    def parse_starter_item_priority_map(self, value):
+        if not isinstance(value, dict):
+            return {}
+        result = {}
+        for starter, items in value.items():
+            starter_key = self.normalize_pokemon_name(starter)
+            if not starter_key:
+                continue
+            priorities = self.parse_priority_text(items, ())
+            if priorities:
+                result[starter_key] = priorities
+        return result
+
     def priority_text(self, values):
         return "\n".join(self.item_label_with_detail(value) for value in values)
 
@@ -882,6 +955,29 @@ class PokeLikeBotGUI(ctk.CTk):
         return " ".join(
             "".join(ch.lower() if ch.isalnum() else " " for ch in str(name or "")).split()
         )
+
+    def normalize_pokemon_name(self, name):
+        return " ".join(
+            "".join(ch.lower() if ch.isalnum() else " " for ch in str(name or "")).split()
+        )
+
+    def current_starter_key(self):
+        thread_local = getattr(self, "thread_local", None)
+        if thread_local is not None and getattr(thread_local, "use_local", False):
+            starter = getattr(self, "current_starter_name", "") or STARTER_NAME
+        else:
+            starter = self.starter_var.get() or getattr(self, "current_starter_name", "") or STARTER_NAME
+        return self.normalize_pokemon_name(starter)
+
+    def current_starter_label(self):
+        key = self.current_starter_key()
+        return key.title() if key else STARTER_NAME.title()
+
+    def active_regular_item_priority(self):
+        key = self.current_starter_key()
+        if key and key in self.regular_item_priority_by_starter:
+            return self.regular_item_priority_by_starter[key]
+        return self.regular_item_priority
 
     def strip_item_detail(self, text):
         text = str(text or "").strip()
@@ -908,6 +1004,49 @@ class PokeLikeBotGUI(ctk.CTk):
         display = str(name or "").strip() or normalized
         detail = self.passive_item_details.get(normalized, "") if hasattr(self, "passive_item_details") else ""
         return f"{display} [{detail}]" if detail else display
+
+    def passive_item_type_group(self, name):
+        normalized = self.normalize_item_name(name)
+        detail = self.passive_item_details.get(normalized, "") if hasattr(self, "passive_item_details") else ""
+
+        def plain_text(value):
+            text = str(value or "").lower()
+            text = text.replace("pokémon", "pokemon").replace("pok\u00e9mon", "pokemon")
+            text = text.replace("sp.atk", "sp atk").replace("sp.def", "sp def")
+            return re.sub(r"[^a-z0-9]+", " ", text)
+
+        def find_type(source, allow_bare_type=False):
+            text = plain_text(source)
+            if not text:
+                return None
+            matches = []
+            for type_name in POKEMON_TYPE_NAMES:
+                patterns = [
+                    rf"\b{type_name}\s+pokemon\b",
+                    rf"\b{type_name}\s+type\b",
+                    rf"\b{type_name}\s+types\b",
+                    rf"\b{type_name}\s+trait\b",
+                    rf"\b{type_name}\s+traits\b",
+                    rf"\b{type_name}\s+attack\b",
+                    rf"\b{type_name}\s+attacks\b",
+                    rf"\b{type_name}\s+move\b",
+                    rf"\b{type_name}\s+moves\b",
+                    rf"\b{type_name}\s+ally\b",
+                    rf"\b{type_name}\s+allies\b",
+                ]
+                if allow_bare_type:
+                    patterns.append(rf"\b{type_name}\b")
+                for pattern in patterns:
+                    match = re.search(pattern, text)
+                    if match:
+                        matches.append((match.start(), type_name))
+                        break
+            if not matches:
+                return None
+            matches.sort(key=lambda item: item[0])
+            return f"{matches[0][1].title()} type"
+
+        return find_type(detail) or find_type(name, allow_bare_type=True) or "General"
 
     def load_passive_item_details(self):
         details = {
@@ -1028,10 +1167,12 @@ class PokeLikeBotGUI(ctk.CTk):
             "starter": self.starter_var.get().strip(),
             "shiny_whitelist": self.target_pokemon_var.get().strip(),
             "browser_count": self.parse_browser_count(),
+            "chrome_restart_minutes": self.parse_chrome_restart_minutes(),
             "schedule_enabled": bool(self.schedule_enabled_var.get()),
             "task_schedule": self.task_schedule,
             "starting_item_priority": self.starting_item_priority,
             "regular_item_priority": self.regular_item_priority,
+            "regular_item_priority_by_starter": self.regular_item_priority_by_starter,
             "starting_item_ignore": self.starting_item_ignore,
         }
         try:
@@ -1060,7 +1201,7 @@ class PokeLikeBotGUI(ctk.CTk):
 
         brand_actions = ctk.CTkFrame(header, fg_color="transparent")
         brand_actions.grid(row=0, column=1, padx=(0, 18), pady=12, sticky="e")
-        brand_actions.grid_columnconfigure((0, 1), weight=0)
+        brand_actions.grid_columnconfigure((0, 1, 2), weight=0)
         discord_button = ctk.CTkLabel(
             brand_actions,
             text="" if self.discord_icon else "Discord",
@@ -1080,8 +1221,19 @@ class PokeLikeBotGUI(ctk.CTk):
             height=48,
             cursor="hand2",
         )
-        website_button.grid(row=0, column=1, sticky="e")
+        website_button.grid(row=0, column=1, padx=(0, 12), sticky="e")
         website_button.bind("<Button-1>", self.open_brand_link)
+
+        github_button = ctk.CTkLabel(
+            brand_actions,
+            text="" if self.github_icon else "GitHub",
+            image=self.github_icon,
+            width=48,
+            height=48,
+            cursor="hand2",
+        )
+        github_button.grid(row=0, column=2, sticky="e")
+        github_button.bind("<Button-1>", lambda _event: self.open_github_link())
 
         controls = ctk.CTkFrame(self, corner_radius=14)
         controls.grid(row=1, column=0, padx=18, pady=8, sticky="ew")
@@ -1161,6 +1313,16 @@ class PokeLikeBotGUI(ctk.CTk):
         ctk.CTkLabel(manual_box, text="Browsers", text_color="gray70").grid(row=0, column=1, padx=(12, 8), pady=(10, 0), sticky="e")
         self.browser_count_entry = ctk.CTkEntry(manual_box, textvariable=self.browser_count_var, width=70)
         self.browser_count_entry.grid(row=0, column=2, padx=(0, 12), pady=(10, 0), sticky="e")
+        ctk.CTkLabel(manual_box, text="Restart Chrome (min)", text_color="gray70").grid(
+            row=1, column=1, padx=(12, 8), pady=(6, 10), sticky="e"
+        )
+        self.chrome_restart_entry = ctk.CTkEntry(
+            manual_box,
+            textvariable=self.chrome_restart_minutes_var,
+            width=70,
+            placeholder_text="0",
+        )
+        self.chrome_restart_entry.grid(row=1, column=2, padx=(0, 12), pady=(6, 10), sticky="e")
 
         schedule_box = ctk.CTkFrame(options_box, corner_radius=10, fg_color="#111827")
         schedule_box.grid(row=0, column=1, padx=(6, 0), sticky="nsew")
@@ -1246,12 +1408,14 @@ class PokeLikeBotGUI(ctk.CTk):
 
     def schedule_step_label(self, step):
         target = step.get("target", RUN_TARGET_DAILY)
+        starter = " ".join(str(step.get("starter") or "").strip().split())
         goal = step.get("goal", "Wins")
         count = int(step.get("count", 1))
         suffix = "win" if goal == "Wins" and count == 1 else goal.lower()
         if goal == "Runs" and count == 1:
             suffix = "run"
-        return f"{target} x{count} {suffix}"
+        starter_text = f" with {starter.title()}" if starter else ""
+        return f"{target}{starter_text} x{count} {suffix}"
 
     def update_schedule_summary(self):
         if not hasattr(self, "schedule_summary_label"):
@@ -1511,8 +1675,8 @@ class PokeLikeBotGUI(ctk.CTk):
         window = ctk.CTkToplevel(self)
         self.prepare_popup_window(window)
         window.title("Task schedule")
-        window.geometry("860x560")
-        window.minsize(760, 460)
+        window.geometry("980x560")
+        window.minsize(900, 460)
         self.prepare_popup_window(window)
         window.grid_columnconfigure(0, weight=1)
         window.grid_rowconfigure(2, weight=1)
@@ -1539,8 +1703,9 @@ class PokeLikeBotGUI(ctk.CTk):
         column_header.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(column_header, text="#", width=36, text_color="gray70").grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(column_header, text="Run target", text_color="gray70").grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(column_header, text="Advance after", width=130, text_color="gray70").grid(row=0, column=2, sticky="w")
-        ctk.CTkLabel(column_header, text="Amount", width=90, text_color="gray70").grid(row=0, column=3, sticky="w")
+        ctk.CTkLabel(column_header, text="Starter", width=130, text_color="gray70").grid(row=0, column=2, sticky="w")
+        ctk.CTkLabel(column_header, text="Advance after", width=130, text_color="gray70").grid(row=0, column=3, sticky="w")
+        ctk.CTkLabel(column_header, text="Amount", width=90, text_color="gray70").grid(row=0, column=4, sticky="w")
 
         list_frame = ctk.CTkScrollableFrame(window, corner_radius=12)
         list_frame.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="nsew")
@@ -1556,6 +1721,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     count = 1
                 steps.append({
                     "target": row["target"].get(),
+                    "starter": row["starter"].get().strip(),
                     "goal": row["goal"].get(),
                     "count": max(1, min(count, 9999)),
                 })
@@ -1568,9 +1734,10 @@ class PokeLikeBotGUI(ctk.CTk):
             steps = rows if rows is not None else sync_rows_from_widgets()
             for index, step in enumerate(steps):
                 target_var = ctk.StringVar(value=step["target"])
+                starter_var = ctk.StringVar(value=step.get("starter", ""))
                 goal_var = ctk.StringVar(value=step["goal"])
                 count_var = ctk.StringVar(value=str(step["count"]))
-                row_vars.append({"target": target_var, "goal": goal_var, "count": count_var})
+                row_vars.append({"target": target_var, "starter": starter_var, "goal": goal_var, "count": count_var})
 
                 ctk.CTkLabel(list_frame, text=str(index + 1), width=36).grid(
                     row=index, column=0, padx=(8, 6), pady=7, sticky="w"
@@ -1580,27 +1747,33 @@ class PokeLikeBotGUI(ctk.CTk):
                     values=list(RUN_TARGET_OPTIONS),
                     variable=target_var,
                 ).grid(row=index, column=1, padx=6, pady=7, sticky="ew")
+                ctk.CTkEntry(
+                    list_frame,
+                    textvariable=starter_var,
+                    width=124,
+                    placeholder_text="main starter",
+                ).grid(row=index, column=2, padx=6, pady=7, sticky="ew")
                 ctk.CTkOptionMenu(
                     list_frame,
                     values=list(SCHEDULE_COMPLETION_OPTIONS),
                     variable=goal_var,
                     width=120,
-                ).grid(row=index, column=2, padx=6, pady=7, sticky="ew")
+                ).grid(row=index, column=3, padx=6, pady=7, sticky="ew")
                 ctk.CTkEntry(list_frame, textvariable=count_var, width=76).grid(
-                    row=index, column=3, padx=6, pady=7, sticky="ew"
+                    row=index, column=4, padx=6, pady=7, sticky="ew"
                 )
                 ctk.CTkButton(
                     list_frame,
                     text="Up",
                     width=54,
                     command=lambda i=index: move_row(i, -1),
-                ).grid(row=index, column=4, padx=(8, 3), pady=7)
+                ).grid(row=index, column=5, padx=(8, 3), pady=7)
                 ctk.CTkButton(
                     list_frame,
                     text="Down",
                     width=62,
                     command=lambda i=index: move_row(i, 1),
-                ).grid(row=index, column=5, padx=3, pady=7)
+                ).grid(row=index, column=6, padx=3, pady=7)
                 ctk.CTkButton(
                     list_frame,
                     text="Remove",
@@ -1608,7 +1781,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     fg_color="#7c2424",
                     hover_color="#963030",
                     command=lambda i=index: remove_row(i),
-                ).grid(row=index, column=6, padx=(3, 8), pady=7)
+                ).grid(row=index, column=7, padx=(3, 8), pady=7)
 
         def move_row(index, direction):
             steps = sync_rows_from_widgets()
@@ -1627,7 +1800,7 @@ class PokeLikeBotGUI(ctk.CTk):
 
         def add_row():
             steps = sync_rows_from_widgets()
-            steps.append({"target": "Story Classic - Kanto", "goal": "Runs", "count": 1})
+            steps.append({"target": "Story Classic - Kanto", "starter": "", "goal": "Runs", "count": 1})
             redraw(steps)
 
         def reset_rows():
@@ -1693,17 +1866,210 @@ class PokeLikeBotGUI(ctk.CTk):
         ctk.CTkLabel(window, text="Starting / passive item priority").grid(
             row=1, column=0, padx=(16, 8), pady=(0, 6), sticky="w"
         )
-        ctk.CTkLabel(window, text="Regular reward item priority").grid(
-            row=1, column=1, padx=(8, 16), pady=(0, 6), sticky="w"
+        starter_key = self.current_starter_key()
+        starter_label = self.current_starter_label()
+        regular_header = ctk.CTkFrame(window, fg_color="transparent")
+        regular_header.grid(row=1, column=1, padx=(8, 16), pady=(0, 6), sticky="ew")
+        regular_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            regular_header,
+            text=f"Held-item reward priority for {starter_label}",
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            regular_header,
+            text="Load default",
+            width=96,
+            command=lambda: load_regular_default(),
+        ).grid(row=0, column=1, padx=(8, 0), sticky="e")
+        ctk.CTkButton(
+            regular_header,
+            text="Clear starter",
+            width=104,
+            command=lambda: clear_starter_regular_profile(),
+        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
+
+        class PriorityBlockList:
+            def __init__(block_self, parent, row, column, values, padx, rowspan=1, group_items=False):
+                block_self.group_items = group_items
+                block_self.items = list(values)
+                block_self.selected_index = 0 if block_self.items else None
+                block_self.collapsed_groups = set()
+                block_self.frame = ctk.CTkScrollableFrame(parent, corner_radius=10)
+                block_self.frame.grid(row=row, column=column, rowspan=rowspan, padx=padx, pady=(0, 12), sticky="nsew")
+                block_self.frame.grid_columnconfigure(0, weight=1)
+                block_self.render()
+
+            def normalize_block_item(block_self, value):
+                return self.normalize_item_name(value)
+
+            def item_group(block_self, value):
+                return self.passive_item_type_group(value)
+
+            def grouped_items(block_self):
+                if not block_self.group_items:
+                    return [("", list(block_self.items))]
+                groups = {}
+                for value in block_self.items:
+                    groups.setdefault(block_self.item_group(value), []).append(value)
+                names = sorted(groups, key=lambda name: (name != "General", name))
+                return [(name, groups[name]) for name in names]
+
+            def split_label(block_self, value):
+                label = self.item_label_with_detail(value)
+                detail_start = label.find(" [")
+                if detail_start >= 0 and label.rstrip().endswith("]"):
+                    return label[:detail_start], label[detail_start + 2:-1]
+                return label, ""
+
+            def select(block_self, value):
+                try:
+                    block_self.selected_index = block_self.items.index(value)
+                except ValueError:
+                    block_self.selected_index = None
+                for candidate in priority_block_lists:
+                    if candidate is not block_self:
+                        candidate.selected_index = None
+                        candidate.render()
+                block_self.render()
+
+            def toggle_group(block_self, group):
+                if group in block_self.collapsed_groups:
+                    block_self.collapsed_groups.remove(group)
+                else:
+                    block_self.collapsed_groups.add(group)
+                block_self.render()
+
+            def render(block_self):
+                for child in block_self.frame.winfo_children():
+                    child.destroy()
+                if not block_self.items:
+                    ctk.CTkLabel(block_self.frame, text="No items", text_color="gray55", anchor="w").grid(
+                        row=0, column=0, padx=10, pady=10, sticky="ew"
+                    )
+                    return
+                row = 0
+                for group, values in block_self.grouped_items():
+                    if group:
+                        collapsed = group in block_self.collapsed_groups
+                        ctk.CTkButton(
+                            block_self.frame,
+                            text=f"{'+' if collapsed else '-'} {group}",
+                            height=28,
+                            anchor="w",
+                            fg_color="#263244",
+                            hover_color="#334155",
+                            command=lambda g=group: block_self.toggle_group(g),
+                        ).grid(row=row, column=0, padx=6, pady=(6, 2), sticky="ew")
+                        row += 1
+                        if collapsed:
+                            continue
+                    for value in values:
+                        selected = (
+                            block_self.selected_index is not None
+                            and block_self.selected_index < len(block_self.items)
+                            and block_self.items[block_self.selected_index] == value
+                        )
+                        block = ctk.CTkFrame(
+                            block_self.frame,
+                            corner_radius=8,
+                        fg_color="#1f3a5f" if selected else "#111827",
+                        border_width=1,
+                        border_color="#38bdf8" if selected else "#263244",
+                    )
+                        block.grid(row=row, column=0, padx=6, pady=(3, 2), sticky="ew")
+                        block.grid_columnconfigure(0, weight=1)
+                        name, detail = block_self.split_label(value)
+                        name_label = ctk.CTkLabel(
+                            block,
+                            text=name,
+                            text_color="#7dd3fc",
+                            anchor="w",
+                            font=ctk.CTkFont(weight="bold"),
+                            cursor="hand2",
+                        )
+                        name_label.grid(row=0, column=0, padx=10, pady=(7, 0), sticky="ew")
+                        widgets = [block, name_label]
+                        if detail:
+                            detail_label = ctk.CTkLabel(
+                                block,
+                                text=detail,
+                                text_color="#c4b5fd",
+                                anchor="w",
+                                justify="left",
+                                wraplength=350,
+                                cursor="hand2",
+                            )
+                            detail_label.grid(row=1, column=0, padx=10, pady=(1, 8), sticky="ew")
+                            widgets.append(detail_label)
+                        else:
+                            name_label.grid_configure(pady=(7, 8))
+                        for widget in widgets:
+                            widget.bind("<Button-1>", lambda _event, item=value: block_self.select(item))
+                        row += 1
+
+            def get(block_self, start, end=None):
+                if str(start).startswith("1.0") and str(end).startswith("end"):
+                    return "\n".join(block_self.items)
+                if block_self.selected_index is None or block_self.selected_index >= len(block_self.items):
+                    return ""
+                return block_self.items[block_self.selected_index]
+
+            def delete(block_self, start, end=None):
+                if str(start).startswith("1.0") and str(end).startswith("end"):
+                    block_self.items = []
+                    block_self.selected_index = None
+                    block_self.render()
+
+            def insert(block_self, index, text):
+                block_self.items = self.parse_priority_text(text, ())
+                block_self.selected_index = 0 if block_self.items else None
+                block_self.render()
+
+            def tag_ranges(block_self, _tag):
+                return None
+
+            def index(block_self, mark):
+                if str(mark).startswith("end"):
+                    return f"{len(block_self.items) + 1}.0"
+                line = (block_self.selected_index or 0) + 1
+                return f"{line}.0"
+
+            def bind(block_self, *_args, **_kwargs):
+                return None
+
+            def configure(block_self, *_args, **_kwargs):
+                return None
+
+            def tag_configure(block_self, *_args, **_kwargs):
+                return None
+
+            def tag_remove(block_self, *_args, **_kwargs):
+                return None
+
+            def tag_add(block_self, *_args, **_kwargs):
+                return None
+
+        priority_block_lists = []
+        starting_text = PriorityBlockList(
+            window,
+            row=2,
+            column=0,
+            values=self.starting_item_priority,
+            padx=(16, 8),
+            group_items=True,
         )
+        priority_block_lists.append(starting_text)
 
-        starting_text = ctk.CTkTextbox(window, corner_radius=10)
-        starting_text.grid(row=2, column=0, padx=(16, 8), pady=(0, 12), sticky="nsew")
-        starting_text.insert("1.0", self.priority_text(self.starting_item_priority))
-
-        regular_text = ctk.CTkTextbox(window, corner_radius=10)
-        regular_text.grid(row=2, column=1, rowspan=3, padx=(8, 16), pady=(0, 12), sticky="nsew")
-        regular_text.insert("1.0", self.priority_text(self.regular_item_priority))
+        regular_text = PriorityBlockList(
+            window,
+            row=2,
+            column=1,
+            rowspan=3,
+            values=self.active_regular_item_priority(),
+            padx=(8, 16),
+            group_items=False,
+        )
+        priority_block_lists.append(regular_text)
 
         ignore_header = ctk.CTkFrame(window, fg_color="transparent")
         ignore_header.grid(row=3, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
@@ -1717,9 +2083,77 @@ class PokeLikeBotGUI(ctk.CTk):
             command=lambda: move_lines(starting_text, ignore_text),
         ).pack(side="right")
 
-        ignore_text = ctk.CTkTextbox(window, corner_radius=10)
-        ignore_text.grid(row=4, column=0, padx=(16, 8), pady=(0, 12), sticky="nsew")
-        ignore_text.insert("1.0", self.priority_text(self.starting_item_ignore))
+        ignore_text = PriorityBlockList(
+            window,
+            row=4,
+            column=0,
+            values=self.starting_item_ignore,
+            padx=(16, 8),
+            group_items=True,
+        )
+        priority_block_lists.append(ignore_text)
+
+        styled_boxes = [starting_text, regular_text, ignore_text]
+
+        def _raw_textbox(box):
+            return getattr(box, "_textbox", box)
+
+        def style_priority_box(box):
+            tb = _raw_textbox(box)
+            try:
+                tb.configure(spacing1=3, spacing3=5)
+                tb.tag_configure("item_name", foreground="#7dd3fc")
+                tb.tag_configure("item_detail", foreground="#c4b5fd")
+                tb.tag_configure("selected_item_line", background="#1f3a5f")
+            except Exception:
+                return
+            for tag in ("item_name", "item_detail"):
+                tb.tag_remove(tag, "1.0", "end")
+            try:
+                line_count = int(float(tb.index("end-1c")))
+            except Exception:
+                line_count = 0
+            for line in range(1, line_count + 1):
+                text = tb.get(f"{line}.0", f"{line}.end")
+                if not text.strip():
+                    continue
+                detail_start = text.find(" [")
+                if detail_start >= 0 and text.rstrip().endswith("]"):
+                    tb.tag_add("item_name", f"{line}.0", f"{line}.{detail_start}")
+                    tb.tag_add("item_detail", f"{line}.{detail_start}", f"{line}.end")
+                else:
+                    tb.tag_add("item_name", f"{line}.0", f"{line}.end")
+
+        def highlight_priority_line(box):
+            for other in styled_boxes:
+                try:
+                    _raw_textbox(other).tag_remove("selected_item_line", "1.0", "end")
+                except Exception:
+                    pass
+            tb = _raw_textbox(box)
+            try:
+                line = tb.index("insert").split(".", 1)[0]
+                tb.tag_add("selected_item_line", f"{line}.0", f"{line}.end+1c")
+            except Exception:
+                pass
+
+        def refresh_priority_box(box):
+            style_priority_box(box)
+            highlight_priority_line(box)
+
+        def bind_priority_box(box):
+            tb = _raw_textbox(box)
+            def refresh_later(_event=None):
+                window.after(1, lambda: refresh_priority_box(box))
+            for event in ("<ButtonRelease-1>", "<KeyRelease>", "<FocusIn>", "<<Selection>>"):
+                try:
+                    tb.bind(event, refresh_later, add="+")
+                except Exception:
+                    pass
+            refresh_priority_box(box)
+
+        for box in styled_boxes:
+            bind_priority_box(box)
 
         def _selected_lines(box):
             tb = getattr(box, "_textbox", box)
@@ -1754,32 +2188,51 @@ class PokeLikeBotGUI(ctk.CTk):
             src.insert("1.0", "\n".join(src_lines))
             dst.delete("1.0", "end")
             dst.insert("1.0", "\n".join(dst_lines))
+            refresh_priority_box(src)
+            refresh_priority_box(dst)
 
         button_row = ctk.CTkFrame(window, fg_color="transparent")
         button_row.grid(row=5, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="ew")
-        button_row.grid_columnconfigure((0, 1, 2), weight=1)
+        button_row.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        def apply_priorities():
+        def save_priorities(save_for_starter):
             self.starting_item_priority = self.parse_priority_text(
                 starting_text.get("1.0", "end"),
                 STARTING_ITEM_PRIORITY,
             )
-            self.regular_item_priority = self.parse_priority_text(
+            regular_priorities = self.parse_priority_text(
                 regular_text.get("1.0", "end"),
                 REGULAR_ITEM_PRIORITY,
             )
+            if save_for_starter and starter_key:
+                self.regular_item_priority_by_starter[starter_key] = regular_priorities
+            else:
+                self.regular_item_priority = regular_priorities
             self.starting_item_ignore = self.parse_priority_text(
                 ignore_text.get("1.0", "end"),
                 (),
             )
             self.save_settings()
+            regular_target = f"{starter_label} held-item" if save_for_starter and starter_key else "default held-item"
             self.log(
                 "Updated item priorities: "
                 f"{len(self.starting_item_priority)} starting, "
-                f"{len(self.regular_item_priority)} regular, "
+                f"{len(regular_priorities)} {regular_target}, "
                 f"{len(self.starting_item_ignore)} ignored."
             )
             close_window()
+
+        def load_regular_default():
+            regular_text.delete("1.0", "end")
+            regular_text.insert("1.0", self.priority_text(self.regular_item_priority))
+            refresh_priority_box(regular_text)
+
+        def clear_starter_regular_profile():
+            if starter_key and starter_key in self.regular_item_priority_by_starter:
+                del self.regular_item_priority_by_starter[starter_key]
+                self.save_settings()
+                self.log(f"Cleared held-item priority profile for {starter_label}; using default list.")
+            load_regular_default()
 
         def reset_priorities():
             starting_text.delete("1.0", "end")
@@ -1787,19 +2240,24 @@ class PokeLikeBotGUI(ctk.CTk):
             regular_text.delete("1.0", "end")
             regular_text.insert("1.0", self.priority_text(REGULAR_ITEM_PRIORITY))
             ignore_text.delete("1.0", "end")
+            for box in styled_boxes:
+                refresh_priority_box(box)
 
         def close_window():
             self.priority_window = None
             window.destroy()
 
-        ctk.CTkButton(button_row, text="Save", command=apply_priorities).grid(
+        ctk.CTkButton(button_row, text="Save for starter", command=lambda: save_priorities(True)).grid(
             row=0, column=0, padx=(0, 8), sticky="ew"
         )
-        ctk.CTkButton(button_row, text="Reset defaults", command=reset_priorities).grid(
+        ctk.CTkButton(button_row, text="Save default", command=lambda: save_priorities(False)).grid(
             row=0, column=1, padx=8, sticky="ew"
         )
+        ctk.CTkButton(button_row, text="Reset defaults", command=reset_priorities).grid(
+            row=0, column=2, padx=8, sticky="ew"
+        )
         ctk.CTkButton(button_row, text="Cancel", command=close_window).grid(
-            row=0, column=2, padx=(8, 0), sticky="ew"
+            row=0, column=3, padx=(8, 0), sticky="ew"
         )
         window.protocol("WM_DELETE_WINDOW", close_window)
         self.bring_popup_to_front(window)
@@ -1892,7 +2350,7 @@ class PokeLikeBotGUI(ctk.CTk):
         target_list = getattr(self, "current_target_pokemon_list", []) or []
         if self.current_mode == MODE_FULL_RUN:
             self.rolls_label.master.winfo_children()[0].configure(text="Leaders / E4")
-            self.rolls_label.configure(text=str(self.maps_reached))
+            self.rolls_label.configure(text=str(self.run_leaders_defeated))
             self.target_seen_label.master.winfo_children()[0].configure(text="Legendaries")
             self.target_seen_label.configure(text=str(self.total_legendaries_seen))
         elif target_list:
@@ -1911,8 +2369,18 @@ class PokeLikeBotGUI(ctk.CTk):
             return None
         return self.task_schedule[self.schedule_index].get("target")
 
+    def active_schedule_starter(self):
+        if not self.schedule_active or self.schedule_index >= len(self.task_schedule):
+            return None
+        starter = " ".join(str(self.task_schedule[self.schedule_index].get("starter") or "").strip().split())
+        if starter:
+            return starter.lower()
+        return (self.schedule_default_starter_name or STARTER_NAME).strip().lower()
+
     def apply_active_schedule_target(self):
         target = self.active_schedule_target()
+        starter = self.active_schedule_starter()
+        changed = False
         if not target:
             return False
         if target != self.current_run_target:
@@ -1921,7 +2389,13 @@ class PokeLikeBotGUI(ctk.CTk):
             self.current_run_target_info = self.parse_run_target(target)
             self.current_tower = self.current_run_target_info.get("name", target)
             self.log(f"Schedule switched to: {target}")
-        return True
+            changed = True
+        if starter and starter != self.current_starter_name:
+            self.current_starter_name = starter
+            self.starter_var.set(starter.title())
+            self.log(f"Schedule starter switched to: {starter.title()}")
+            changed = True
+        return changed
 
     def result_screen_signature(self, screen):
         try:
@@ -2020,6 +2494,16 @@ class PokeLikeBotGUI(ctk.CTk):
             count = 1
         return max(1, min(count, MAX_BROWSER_COUNT))
 
+    def parse_chrome_restart_minutes(self):
+        raw = str(self.chrome_restart_minutes_var.get()).strip().lower()
+        if raw in ["", "0", "off", "none", "disabled"]:
+            return 0.0
+        try:
+            minutes = float(raw.replace(",", "."))
+        except Exception:
+            minutes = 0.0
+        return max(0.0, min(minutes, 1440.0))
+
     def prepare_single_driver_page(self, driver):
         try:
             current_url = driver.current_url or ""
@@ -2084,6 +2568,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.last_team_snapshot = []
         self.last_passive_items_snapshot = []
         self.last_legendary_signature = None
+        self.last_leader_signature = None
         self.awaiting_leader_item_roll = False
         self.restart_attempt = False
         self.last_item_signature = None
@@ -2104,20 +2589,28 @@ class PokeLikeBotGUI(ctk.CTk):
         self.stop_event.clear()
         self.current_mode = selected_mode
         self.manual_first_attempt = bool(self.manual_start_var.get())
+        self.schedule_default_starter_name = (self.starter_var.get().strip() or STARTER_NAME).lower()
         if self.schedule_active:
             self.browser_count_var.set("1")
             self.log("Task schedule enabled; using one browser so tasks advance in order.")
-        self.current_run_target = self.active_schedule_target() or self.run_target_var.get()
+        self.current_run_target = self.run_target_var.get()
         self.run_target_var.set(self.current_run_target)
         self.current_run_target_info = self.parse_run_target(self.current_run_target)
         self.current_tower = self.current_run_target_info.get("name", self.current_run_target)
-        self.current_starter_name = (self.starter_var.get().strip() or STARTER_NAME).lower()
+        self.current_starter_name = self.schedule_default_starter_name
+        self.apply_active_schedule_target()
         self.current_target_pokemon_list = target_pokemon_list
         self.current_target_pokemon = ", ".join(target_pokemon_list)
         self.browser_count = self.parse_browser_count()
+        self.chrome_restart_minutes = self.parse_chrome_restart_minutes()
         self.winning_driver = None
         self.worker_errors = []
         self.save_settings()
+        if self.chrome_restart_minutes > 0:
+            self.log(
+                f"Chrome restart enabled every {self.chrome_restart_minutes:g} minute(s); "
+                "the bot will resume the visible saved run after relaunch."
+            )
 
         self.start_button.configure(state="disabled")
         self.open_browser_button.configure(state="disabled")
@@ -2131,6 +2624,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.starter_entry.configure(state="disabled")
         self.target_pokemon_entry.configure(state="disabled")
         self.browser_count_entry.configure(state="disabled")
+        self.chrome_restart_entry.configure(state="disabled")
         self.runtime_label.configure(text="00:00:00")
         self.money_per_hour_label.configure(text="0/h")
         self.update_stats_labels()
@@ -2161,6 +2655,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.safe_ui(lambda: self.starter_entry.configure(state="normal"))
         self.safe_ui(lambda: self.target_pokemon_entry.configure(state="normal"))
         self.safe_ui(lambda: self.browser_count_entry.configure(state="normal"))
+        self.safe_ui(lambda: self.chrome_restart_entry.configure(state="normal"))
 
     def profile_path_for_worker(self, worker_id=1):
         if worker_id <= 1:
@@ -2430,6 +2925,25 @@ class PokeLikeBotGUI(ctk.CTk):
             self.worker_drivers = [keep_driver]
         self._driver = keep_driver
         self._wait = WebDriverWait(keep_driver, 30)
+
+    def replace_current_worker_driver(self, worker_id):
+        old_driver = self.driver
+        try:
+            old_driver.quit()
+        except Exception:
+            pass
+        new_driver = self.launch_driver(worker_id=worker_id, make_active=True)
+        with self.drivers_lock:
+            self.worker_drivers = [
+                new_driver if driver is old_driver else driver
+                for driver in self.worker_drivers
+                if driver is new_driver or driver is not old_driver
+            ]
+            if new_driver not in self.worker_drivers:
+                self.worker_drivers.append(new_driver)
+        self.thread_local.driver = new_driver
+        self.thread_local.wait = WebDriverWait(new_driver, 30)
+        return new_driver
 
     def sync_session_state_to_drivers(self):
         drivers = self.get_live_drivers()
@@ -3084,6 +3598,68 @@ class PokeLikeBotGUI(ctk.CTk):
         except Exception:
             pass
 
+    def click_visible_resume_button(self):
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.click();
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
+            const button = [...document.querySelectorAll('button, [role="button"]')]
+                .filter(visible)
+                .find(btn => {
+                    const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                    const id = (btn.id || '').toLowerCase();
+                    const cls = (btn.className || '').toString().toLowerCase();
+                    return text.includes('resume')
+                        || id.includes('continue')
+                        || cls.includes('title-mode-resume');
+                });
+            if (!button) return {clicked: false};
+            click(button);
+            return {clicked: true, text: (button.innerText || button.textContent || '').trim()};
+            """
+        )
+        if result.get("clicked"):
+            self.log(f"Clicked title action: {result.get('text') or 'Resume'}")
+            time.sleep(1.0)
+            return True
+        return False
+
+    def restart_chrome_if_due(self, worker_id):
+        if not self.chrome_restart_minutes or self.chrome_restart_minutes <= 0:
+            return False
+        now = time.time()
+        last_restart = getattr(self.thread_local, "last_chrome_restart_at", None) or self.run_started_at or now
+        if now - last_restart < self.chrome_restart_minutes * 60:
+            return False
+        self.log(f"B{worker_id}: restarting Chrome after {self.chrome_restart_minutes:g} minute(s), then resuming run.")
+        self.thread_local.last_chrome_restart_at = now
+        self.replace_current_worker_driver(worker_id)
+        self.prepare_page()
+        for _ in range(8):
+            if self.click_visible_resume_button():
+                return True
+            if self.active_screen_id() in [
+                "map-screen", "battle-screen", "item-screen", "catch-screen", "badge-screen",
+                "passive-screen", "stat-buff-screen", "swap-screen", "elite-prep-screen",
+            ]:
+                return True
+            time.sleep(0.5)
+        raise RuntimeError("Chrome restarted, but no Resume button or active run screen appeared.")
+
     def click_optional_confirm(self):
         try:
             dialog = self.driver.switch_to.alert
@@ -3702,7 +4278,7 @@ class PokeLikeBotGUI(ctk.CTk):
             }
             return {take: false, owned, offered: choices.map(choice => choice.name)};
             """,
-            list(self.regular_item_priority),
+            list(self.active_regular_item_priority()),
             list(CONSUMABLE_ITEM_ALIASES),
         )
         if not decision.get("take"):
@@ -4029,7 +4605,16 @@ class PokeLikeBotGUI(ctk.CTk):
                 scoreTexts.push(clean(active.innerText || active.textContent));
                 let scoreText = '';
                 let score = 0;
+                const scoreValue = [...active.querySelectorAll('.run-score-value, [class*="score-value"]')]
+                    .filter(visible)
+                    .map(el => clean(el.innerText || el.textContent))
+                    .find(text => /^[0-9][0-9.,]*$/.test(text));
+                if (scoreValue) {
+                    scoreText = `SCORE ${scoreValue}`;
+                    score = parseInt(scoreValue.replace(/[^0-9]/g, ''), 10) || 0;
+                }
                 for (const text of scoreTexts) {
+                    if (score) break;
                     const match = text.match(/\\bscore\\b\\s*[:\\-]?\\s*([0-9][0-9.,]*)/i);
                     if (match) {
                         scoreText = match[0];
@@ -4096,7 +4681,7 @@ class PokeLikeBotGUI(ctk.CTk):
             "wallet_total": self.last_wallet_pokegold_total,
             "score": int(result_details.get("score") or 0),
             "score_text": str(result_details.get("scoreText") or ""),
-            "leaders": int(self.run_leaders_defeated or self.maps_reached or 0),
+            "leaders": int(self.run_leaders_defeated or 0),
             "legendaries": int(self.run_legendaries_seen or 0),
             "passive_items": list(passive_items)[:12],
             "pokemon": [
@@ -4129,6 +4714,93 @@ class PokeLikeBotGUI(ctk.CTk):
             self.total_legendaries_seen += 1
             self.run_legendaries_seen = int(self.run_legendaries_seen or 0) + 1
         self.update_stats_labels()
+
+    def normalize_trainer_name(self, value):
+        text = str(value or "").lower()
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        text = re.sub(
+            r"\b(wants to battle|would like to battle|challenge stage|map|trainer|pokemon|pokémon)\b",
+            " ",
+            text,
+        )
+        return " ".join(text.split())
+
+    def known_leader_or_elite_name(self, text):
+        normalized = self.normalize_trainer_name(text)
+        if not normalized:
+            return ""
+        for name in sorted(LEADER_OR_ELITE_TRAINER_NAMES, key=len, reverse=True):
+            leader = self.normalize_trainer_name(name)
+            if not leader:
+                continue
+            if re.search(rf"(^| ){re.escape(leader)}($| )", normalized):
+                return " ".join(part.capitalize() for part in leader.split())
+        return ""
+
+    def current_boss_trainer_info(self, include_map_info=False):
+        try:
+            return self.driver.execute_script(
+                """
+                const includeMapInfo = !!arguments[0];
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const text = (el) => (el ? (el.innerText || el.textContent || '').trim() : '');
+                const attrText = (el) => {
+                    if (!el) return '';
+                    return [
+                        el.getAttribute('alt'),
+                        el.getAttribute('title'),
+                        el.getAttribute('aria-label'),
+                        el.getAttribute('src')
+                    ].filter(Boolean).join(' ');
+                };
+                const active = document.querySelector('.screen.active');
+                const screen = active?.id || '';
+                const sources = [];
+                const push = (source, value) => {
+                    value = (value || '').trim();
+                    if (value) sources.push({source, value});
+                };
+                push('battle-title', text(document.querySelector('#battle-title')));
+                push('enemy-trainer-icon', attrText(document.querySelector('#enemy-trainer-icon')));
+                if (screen === 'elite-prep-screen' || screen === 'badge-screen') {
+                    push('elite-prep-enemy-name', text(document.querySelector('#elite-prep-enemy-name')));
+                    push('elite-prep-title', text(document.querySelector('#elite-prep-title')));
+                    push('elite-prep-sub', text(document.querySelector('#elite-prep-sub')));
+                    push('elite-prep-enemy-trainer', attrText(document.querySelector('#elite-prep-enemy-trainer')));
+                }
+                if (includeMapInfo || screen === 'elite-prep-screen' || screen === 'badge-screen') {
+                    push('map-info', text(document.querySelector('#map-info')));
+                }
+                return {screen, sources};
+                """,
+                include_map_info,
+            ) or {"screen": "", "sources": []}
+        except Exception:
+            return {"screen": "", "sources": []}
+
+    def record_leader_or_elite_if_visible(self, source="", include_map_info=False):
+        info = self.current_boss_trainer_info(include_map_info=include_map_info)
+        for item in info.get("sources") or []:
+            name = self.known_leader_or_elite_name(item.get("value"))
+            if not name:
+                continue
+            signature = f"{name.lower()}:{self.maps_started}:{self.maps_reached}"
+            if signature == self.last_leader_signature:
+                return False
+            self.last_leader_signature = signature
+            with self.stats_lock:
+                self.run_leaders_defeated = int(self.run_leaders_defeated or 0) + 1
+            self.log(f"Leader/E4 counted: {name} ({source or item.get('source') or 'trainer'}).")
+            self.update_stats_labels()
+            return True
+        return False
 
     def record_run_passive_item(self, name):
         label = " ".join(str(name or "").strip().split())
@@ -4317,7 +4989,15 @@ class PokeLikeBotGUI(ctk.CTk):
                 if (typeof el.click === 'function') el.click();
             };
             const active = document.querySelector('.screen.active') || document;
-            const addButton = [...active.querySelectorAll('#swap-choices button, #swap-choices [role="button"], button, [role="button"]')]
+            const addButton = [...active.querySelectorAll([
+                    '#swap-choices button',
+                    '#swap-choices [role="button"]',
+                    '#swap-choices .choice-card',
+                    '#swap-choices .choice-cell',
+                    '#swap-choices [onclick]',
+                    'button',
+                    '[role="button"]'
+                ].join(','))]
                 .filter(visible)
                 .find(btn => {
                     const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
@@ -4387,6 +5067,25 @@ class PokeLikeBotGUI(ctk.CTk):
                 selected = candidates.find(candidate => !candidate.shiny) || (allowAny ? candidates[0] : null);
             }
             if (!selected) {
+                if (policy === 'add_only') {
+                    const incomingCard = active.querySelector([
+                        '#swap-incoming .poke-card',
+                        '#swap-incoming [role="button"]',
+                        '#swap-incoming [data-shortcut]',
+                        '#swap-incoming img[src*="/pokemon/"]'
+                    ].join(','));
+                    const incomingClickTarget = incomingCard?.closest?.('.poke-card, [role="button"], [data-shortcut]') || incomingCard;
+                    if (!incomingClickTarget || !visible(incomingClickTarget)) {
+                        return {clicked: false, count: candidates.length, addOnlyMissing: true, policy};
+                    }
+                    incomingClickTarget.setAttribute('data-bot-swap-add-target', '1');
+                    return {
+                        clicked: true,
+                        incomingClicked: true,
+                        text: (incomingClickTarget.innerText || incomingClickTarget.textContent || '').trim(),
+                        policy
+                    };
+                }
                 if (!keepTeamButton) return {clicked: false, count: candidates.length, keepTeamMissing: true, policy};
                 clickElement(keepTeamButton);
                 return {
@@ -4408,7 +5107,32 @@ class PokeLikeBotGUI(ctk.CTk):
             return False
         if result.get("addClicked"):
             self.log(f"Team replace: clicked {result.get('text') or 'Add to team'}.")
+            if result.get("policy") == "add_only":
+                self.pending_team_replace = False
+                self.pending_replace_allow_any = False
+                self.pending_replace_policy = "default"
             time.sleep(0.6)
+            return True
+        if result.get("incomingClicked"):
+            try:
+                el = self.driver.find_element(By.CSS_SELECTOR, '[data-bot-swap-add-target="1"]')
+                self.browser_center_click(el, press_enter=True)
+                self.log("Team replace: clicked incoming Pokemon to open Add to team control.")
+                time.sleep(0.25)
+                if self.active_screen_id() != "swap-screen":
+                    self.pending_team_replace = False
+                    self.pending_replace_allow_any = False
+                    self.pending_replace_policy = "default"
+            except Exception as exc:
+                self.log(f"Team replace: incoming Pokemon click failed ({exc}).")
+            finally:
+                try:
+                    self.driver.execute_script(
+                        "document.querySelector('[data-bot-swap-add-target=\"1\"]')?.removeAttribute('data-bot-swap-add-target');"
+                    )
+                except Exception:
+                    pass
+            time.sleep(0.5)
             return True
         if result.get("keptTeam"):
             self.pending_team_replace = False
@@ -4527,7 +5251,8 @@ class PokeLikeBotGUI(ctk.CTk):
             const NON_EVO_SCREENS = [
                 'shiny-screen', 'catch-screen', 'item-screen', 'passive-screen',
                 'swap-screen', 'trade-screen', 'stat-buff-screen', 'badge-screen',
-                'starter-screen', 'elite-prep-screen', 'gameover-screen', 'win-screen'
+                'starter-screen', 'elite-prep-screen', 'battle-screen',
+                'gameover-screen', 'win-screen'
             ];
             if (NON_EVO_SCREENS.includes(activeId) && !hasVisibleRoot && !hasEvolutionText) {
                 return {clicked: false};
@@ -4536,6 +5261,18 @@ class PokeLikeBotGUI(ctk.CTk):
                 return {clicked: false};
             }
             const root = choiceRoots.find(visible) || document.querySelector('.screen.active') || document.body || document;
+            const directChoiceCards = [
+                ...document.querySelectorAll('#eevee-choices > *, #evo-choices > *, #evolution-choices > *')
+            ].filter(visible).filter(el => {
+                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                const id = (el.id || '').toLowerCase();
+                const cls = (el.className || '').toString().toLowerCase();
+                return text
+                    && !!el.querySelector('img[src*="/pokemon/"]')
+                    && !text.includes('cancel') && !text.includes('back') && !text.includes('skip')
+                    && !id.includes('cancel') && !id.includes('back') && !id.includes('skip')
+                    && !cls.includes('cancel') && !cls.includes('back') && !cls.includes('skip');
+            });
             const selectors = [
                 '#eevee-choices [role="button"]',
                 '#eevee-choices button',
@@ -4606,7 +5343,9 @@ class PokeLikeBotGUI(ctk.CTk):
                         && !cls.includes('cancel') && !cls.includes('back')
                         && looksLikeChoice;
                 });
-            const card = candidates.find(el => el.querySelector('img[src*="/pokemon/"], .dex-name, .poke-name'))
+            const choicePool = directChoiceCards.length ? directChoiceCards : candidates;
+            const card = choicePool[Math.floor(Math.random() * choicePool.length)]
+                || candidates.find(el => el.querySelector('img[src*="/pokemon/"], .dex-name, .poke-name'))
                 || candidates.find(el => !el.matches('button'))
                 || candidates[0];
             if (!card) return {clicked: false};
@@ -4631,15 +5370,48 @@ class PokeLikeBotGUI(ctk.CTk):
         if not result.get("found"):
             return False
         name = result.get("name") or "random option"
-        clicked = False
+        def choice_still_visible():
+            try:
+                return bool(self.driver.execute_script(
+                    """
+                    const visible = (el) => {
+                        if (!el) return false;
+                        const rect = el.getBoundingClientRect();
+                        const style = getComputedStyle(el);
+                        return rect.width > 0 && rect.height > 0
+                            && style.display !== 'none'
+                            && style.visibility !== 'hidden';
+                    };
+                    return ['#eevee-choice-overlay', '#evo-overlay', '#evo-choices', '#evolution-choices']
+                        .some(selector => visible(document.querySelector(selector)));
+                    """
+                ))
+            except Exception:
+                return False
+
+        def wait_for_choice_to_clear(timeout=1.2):
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if not choice_still_visible():
+                    return True
+                time.sleep(0.12)
+            return not choice_still_visible()
+
+        cleared = False
         try:
             el = self.driver.find_element(By.CSS_SELECTOR, '[data-bot-evo-target="1"]')
-            clicked = self.browser_center_click(el, press_enter=True)
-            time.sleep(0.25)
-            if clicked and self.driver.execute_script(
-                "return !!document.querySelector('[data-bot-evo-target=\"1\"]');"
-            ):
-                self.browser_center_click(el, press_enter=True)
+            for attempt in range(3):
+                self.browser_center_click(el, press_enter=(attempt == 2))
+                if wait_for_choice_to_clear(0.8):
+                    cleared = True
+                    break
+                try:
+                    ActionChains(self.driver).move_to_element(el).pause(0.08).click().perform()
+                    if wait_for_choice_to_clear(0.8):
+                        cleared = True
+                        break
+                except Exception:
+                    pass
                 self.driver.execute_script(
                     """
                     const el = document.querySelector('[data-bot-evo-target="1"]');
@@ -4672,8 +5444,9 @@ class PokeLikeBotGUI(ctk.CTk):
                     }
                     """,
                 )
-            if not clicked:
-                raise RuntimeError("CDP center click returned false")
+                if wait_for_choice_to_clear(0.8):
+                    cleared = True
+                    break
         except Exception as exc:
             self.log(f"Evolution choice: native click failed ({exc}); trying fallback.")
             try:
@@ -4683,9 +5456,9 @@ class PokeLikeBotGUI(ctk.CTk):
                     "el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));"
                     "el.click();}"
                 )
-                clicked = True
+                cleared = wait_for_choice_to_clear(0.8)
             except Exception:
-                clicked = False
+                cleared = False
         finally:
             try:
                 self.driver.execute_script(
@@ -4693,11 +5466,13 @@ class PokeLikeBotGUI(ctk.CTk):
                 )
             except Exception:
                 pass
-        if clicked:
+        if cleared:
             self.log(f"Evolution choice: selected {name}.")
             time.sleep(0.6)
             return True
-        return False
+        self.log(f"Evolution choice: clicked {name}, but the choice overlay is still visible; retrying.")
+        time.sleep(0.4)
+        return True
 
     def click_play_again_if_visible(self):
         result = self.driver.execute_script(
@@ -5121,6 +5896,56 @@ class PokeLikeBotGUI(ctk.CTk):
             list(LEGENDARY_POKEMON_NAMES),
         )
 
+    def swap_team_count(self):
+        try:
+            result = self.driver.execute_script(
+                """
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const selectors = [
+                    '#swap-team-list .team-slot',
+                    '#swap-team-list .poke-card',
+                    '#trade-team-list .team-slot',
+                    '#trade-team-list .poke-card',
+                    '.screen.active .team-slot'
+                ];
+                const seen = new Set();
+                const slots = [];
+                for (const selector of selectors) {
+                    for (const slot of document.querySelectorAll(selector)) {
+                        if (!visible(slot) || slot.closest('#swap-incoming') || seen.has(slot)) continue;
+                        const img = slot.querySelector('img.team-sprite, img.poke-sprite, img[src*="/pokemon/"]');
+                        if (!img || !visible(img)) continue;
+                        const key = [
+                            img.getAttribute('src') || img.src || '',
+                            slot.querySelector('.team-slot-name, .poke-name, .battle-poke-name')?.innerText || '',
+                            slots.length
+                        ].join('|');
+                        if (seen.has(key)) continue;
+                        seen.add(slot);
+                        seen.add(key);
+                        slots.push(slot);
+                    }
+                }
+                return slots.length;
+                """
+            )
+            count = int(result or 0)
+            if count > 0:
+                return min(count, 6)
+        except Exception:
+            pass
+        try:
+            return min(int((self.party_summary() or {}).get("count") or 0), 6)
+        except Exception:
+            return 0
+
     def refresh_team_snapshot(self):
         try:
             party = self.party_summary()
@@ -5446,7 +6271,6 @@ class PokeLikeBotGUI(ctk.CTk):
         return False
 
     def advance_battle(self):
-        time.sleep(0.5)
         for _ in range(40):
             if self.stop_event.is_set():
                 return
@@ -5464,8 +6288,28 @@ class PokeLikeBotGUI(ctk.CTk):
                 """
             )
             if continue_visible:
-                self.js_click("#btn-continue-battle", timeout=3)
-                time.sleep(0.7)
+                is_loss_continue = self.driver.execute_script(
+                    """
+                    const btn = document.querySelector('#btn-continue-battle');
+                    if (!btn) return false;
+                    const cls = (btn.className || '').toString().toLowerCase();
+                    return cls.includes('battle-continue-loss');
+                    """
+                )
+                self.js_click("#btn-continue-battle", timeout=0.4)
+                if is_loss_continue and self.current_mode == MODE_FULL_RUN:
+                    for _ in range(20):
+                        time.sleep(0.15)
+                        next_screen = self.active_screen_id()
+                        if next_screen == "gameover-screen":
+                            self.handle_completed_run_result(False, next_screen)
+                            return
+                        if next_screen == "win-screen":
+                            self.handle_completed_run_result(True, next_screen)
+                            return
+                        if next_screen and next_screen != "battle-screen":
+                            break
+                time.sleep(0.18)
                 return
 
             auto_visible = self.driver.execute_script(
@@ -5477,9 +6321,9 @@ class PokeLikeBotGUI(ctk.CTk):
                 """
             )
             if auto_visible:
-                self.js_click("#btn-auto-battle", timeout=3)
+                self.js_click("#btn-auto-battle", timeout=0.4)
 
-            time.sleep(0.5)
+            time.sleep(0.12)
 
     def handle_move_tutor(self):
         skip_move_tutor = self.current_mode == MODE_FULL_RUN and self.main_move_upgrades_used >= MAIN_MOVE_TARGET_USES
@@ -5515,8 +6359,7 @@ class PokeLikeBotGUI(ctk.CTk):
                 || !!document.querySelector('#btn-skip-tutor')
                 || activeText.includes('move tutor')
                 || activeText.includes('teach')
-                || activeText.includes('learn move')
-                || activeText.includes('tm ');
+                || activeText.includes('learn move');
             if (!hasTutorContext) return {clicked: false};
             const skipButton = [...document.querySelectorAll('#btn-skip-tutor, button, [role="button"]')]
                 .filter(visible)
@@ -5533,8 +6376,14 @@ class PokeLikeBotGUI(ctk.CTk):
                 click(skipButton);
                 return {clicked: true, skipped: true, text: (skipButton.innerText || skipButton.textContent || '').trim()};
             }
-            let row = rows[0] || null;
-            let button = row ? row.querySelector('button[data-tutor], button') : null;
+            let button = [...document.querySelectorAll('button[data-tutor], button')]
+                .filter(visible)
+                .find(btn => ((btn.innerText || btn.textContent || '').trim().toLowerCase()).includes('dragon pulse')) || null;
+            let row = button ? button.closest('.equip-pokemon-row') : null;
+            if (!button) {
+                row = rows[0] || null;
+                button = row ? row.querySelector('button[data-tutor], button') : null;
+            }
             if (!button || !visible(button)) {
                 button = [...document.querySelectorAll('button[data-tutor]')].find(visible) || null;
                 row = button ? button.closest('.equip-pokemon-row') : row;
@@ -5572,6 +6421,76 @@ class PokeLikeBotGUI(ctk.CTk):
             return True
         if result.get("blocked"):
             self.log(f"Move tutor/TM screen blocked: {result.get('reason')}")
+        return False
+
+    def handle_tm_item_equip(self):
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const target = document.elementFromPoint(x, y) || el;
+                for (const node of [...new Set([target, el])]) {
+                    node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.click();
+                    node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                }
+            };
+            const active = document.querySelector('.screen.active');
+            if (active?.id && active.id !== 'item-screen' && active.id !== 'elite-prep-screen') {
+                return {clicked: false};
+            }
+            const modal = document.querySelector('#item-equip-modal');
+            const activeText = [
+                modal?.innerText || modal?.textContent || '',
+                active?.innerText || '',
+                document.body.innerText || ''
+            ].join('\\n').toLowerCase();
+            const rows = [...document.querySelectorAll('#item-equip-modal .equip-pokemon-row, .equip-pokemon-row')]
+                .filter(visible);
+            const isTmContext = activeText.includes('tm ') || activeText.includes('technical machine');
+            const isTutorContext = rows.some(row => !!row.querySelector('button[data-tutor]'))
+                || !!document.querySelector('button[data-tutor]')
+                || !!document.querySelector('#btn-skip-tutor')
+                || activeText.includes('move tutor');
+            if (!isTmContext || isTutorContext || !rows.length) return {clicked: false};
+            for (const row of rows) {
+                const mastered = (row.innerText || row.textContent || '').toLowerCase();
+                if (mastered.includes('already mastered') || mastered.includes('(mastered)') || mastered.includes('move slots full')) {
+                    continue;
+                }
+                const button = [...row.querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        return text.includes('use') || text.includes('teach') || text.includes('learn') || text.includes('select');
+                    });
+                if (!button) continue;
+                const pokemon = row.querySelector('.equip-poke-name')?.innerText || row.innerText || 'Pokemon';
+                click(button);
+                return {clicked: true, pokemon: pokemon.trim(), text: (button.innerText || button.textContent || '').trim()};
+            }
+            return {clicked: false, blocked: true, reason: 'no Pokemon could learn the TM'};
+            """
+        )
+        if result.get("clicked"):
+            self.log(f"TM used on {result.get('pokemon') or 'first Pokemon'}.")
+            time.sleep(0.45)
+            return True
+        if result.get("blocked"):
+            self.log(f"TM skipped: {result.get('reason')}.")
         return False
 
     def handle_regular_item_equip(self):
@@ -5617,8 +6536,7 @@ class PokeLikeBotGUI(ctk.CTk):
                 || !!document.querySelector('#btn-skip-tutor')
                 || activeText.includes('move tutor')
                 || activeText.includes('teach')
-                || activeText.includes('learn move')
-                || activeText.includes('tm ');
+                || activeText.includes('learn move');
             if (hasTutorContext) return {clicked: false, blocked: true, reason: 'tutor context'};
 
             let row = rows.find(candidate => (candidate.getAttribute('data-idx') || '') === '0') || rows[0];
@@ -6064,32 +6982,61 @@ class PokeLikeBotGUI(ctk.CTk):
         ):
             return False
 
+        reward_screens = {
+            "catch-screen",
+            "shiny-screen",
+            "swap-screen",
+            "trade-screen",
+            "passive-screen",
+            "item-screen",
+            "stat-buff-screen",
+            "badge-screen",
+            "elite-prep-screen",
+        }
+        equip_screens = {"item-screen", "elite-prep-screen"}
+        move_tutor_screens = equip_screens | {"map-screen"}
+
         if self.handle_evolution_choice():
             return False
 
-        if self.handle_move_tutor():
+        if screen in equip_screens and self.handle_tm_item_equip():
+            return False
+
+        if screen in move_tutor_screens and self.handle_move_tutor():
             time.sleep(0.5)
             return False
 
-        if self.handle_regular_item_equip():
+        if screen in equip_screens and self.handle_regular_item_equip():
             return False
 
-        if self.handle_team_replace_choice():
+        if (
+            screen == "swap-screen"
+            and self.pending_team_replace
+            and self.pending_replace_policy in {"legendary", "legendary_shiny"}
+            and self.swap_team_count() < 6
+        ):
+            self.pending_replace_allow_any = False
+            self.pending_replace_policy = "add_only"
+
+        if screen in {"swap-screen", "catch-screen", "shiny-screen"} and self.handle_team_replace_choice():
             return False
 
-        if self.handle_passive_replace_choice():
+        if self.pending_passive_item_name and self.handle_passive_replace_choice():
             return False
 
-        if self.handle_final_fight_confirm():
+        if screen == "elite-prep-screen":
+            self.record_leader_or_elite_if_visible("elite prep", include_map_info=True)
+
+        if screen == "elite-prep-screen" and self.handle_final_fight_confirm():
             return False
 
-        if self.handle_pokemon_reward_policy():
+        if screen in {"catch-screen", "shiny-screen", "swap-screen"} and self.handle_pokemon_reward_policy():
             return False
 
-        if self.handle_take_shiny_reward():
+        if screen == "shiny-screen" and self.handle_take_shiny_reward():
             return False
 
-        if self.handle_event_pokemon_reward():
+        if screen in {"catch-screen", "shiny-screen"} and self.handle_event_pokemon_reward():
             return False
 
         if self.is_pokemon_reroll_mode() and screen in [
@@ -6141,8 +7088,12 @@ class PokeLikeBotGUI(ctk.CTk):
             return False
 
         if screen == "battle-screen":
+            self.record_leader_or_elite_if_visible("battle")
             self.advance_battle()
             return False
+
+        if screen == "elite-prep-screen":
+            self.record_leader_or_elite_if_visible("elite prep", include_map_info=True)
 
         if screen == "item-screen":
             if self.is_pokemon_reroll_mode():
@@ -6185,6 +7136,19 @@ class PokeLikeBotGUI(ctk.CTk):
             # handler: it clicks "Add X to team!" when there's room, or releases a
             # valid Pokémon when the team is full. Otherwise keep the team as-is.
             incoming = self.swap_incoming_info() or {}
+            swap_party_count = self.swap_team_count()
+            if (incoming.get("legendary") or incoming.get("hasAdd")) and swap_party_count < 6:
+                self.pending_team_replace = True
+                self.pending_replace_allow_any = False
+                self.pending_replace_policy = "add_only"
+                if self.handle_team_replace_choice():
+                    return False
+                self.pending_team_replace = False
+                self.pending_replace_allow_any = False
+                self.pending_replace_policy = "default"
+                self.log("Team replace: waiting for Add to team control on underfilled team.")
+                time.sleep(0.4)
+                return False
             if incoming.get("legendary"):
                 self.record_legendary_encounter(f"swap:{incoming.get('name')}:{self.active_screen_id()}")
                 self.pending_team_replace = True
@@ -6221,7 +7185,7 @@ class PokeLikeBotGUI(ctk.CTk):
 
         if screen == "badge-screen":
             self.maps_reached += 1
-            self.run_leaders_defeated = self.maps_reached
+            self.record_leader_or_elite_if_visible("badge", include_map_info=True)
             self.awaiting_leader_item_roll = True
             self.log("Badge screen reached.")
             self.update_stats_labels()
@@ -6230,47 +7194,50 @@ class PokeLikeBotGUI(ctk.CTk):
             return False
 
         if screen == "gameover-screen":
-            self.record_money_earned_if_visible()
-            self.record_run_history_result(False, screen)
-            schedule_action = self.update_schedule_after_result(False, screen)
-            if schedule_action == "done":
-                return False
-            if schedule_action == "advance":
-                if self.click_home_if_visible():
-                    self.restart_attempt = True
-                    return False
-                raise RuntimeError("Schedule needs the next task, but Home was not available on the result screen.")
-            if self.click_play_again_if_visible():
-                return False
-            if self.is_pokemon_reroll_mode():
-                self.restart_attempt = True
-                self.log("Run ended without a whitelist hit. Starting another attempt.")
-                return False
-            raise RuntimeError("Run ended and Play Again was not available.")
+            return self.handle_completed_run_result(False, screen)
 
         if screen == "win-screen":
-            self.record_money_earned_if_visible()
-            self.record_run_history_result(True, screen)
-            schedule_action = self.update_schedule_after_result(True, screen)
-            if schedule_action == "done":
-                return False
-            if schedule_action == "advance":
-                if self.click_home_if_visible():
-                    self.restart_attempt = True
-                    return False
-                raise RuntimeError("Schedule needs the next task, but Home was not available on the result screen.")
-            if self.click_play_again_if_visible():
-                return False
-            if self.is_pokemon_reroll_mode():
-                self.restart_attempt = True
-                self.log("Run won without a whitelist hit. Starting another attempt.")
-                return False
-            raise RuntimeError("Run reached win screen before target item appeared.")
+            return self.handle_completed_run_result(True, screen)
 
         time.sleep(0.5)
         return False
 
-    def run_single_attempt(self):
+    def handle_completed_run_result(self, won, screen):
+        self.record_money_earned_if_visible()
+        self.record_run_history_result(won, screen)
+        schedule_action = self.update_schedule_after_result(won, screen)
+        if schedule_action == "done":
+            return False
+        if schedule_action == "advance":
+            if self.click_home_if_visible():
+                self.restart_attempt = True
+                return False
+            raise RuntimeError("Schedule needs the next task, but Home was not available on the result screen.")
+        if self.click_play_again_if_visible():
+            if self.current_mode == MODE_FULL_RUN:
+                self.start_next_play_again_run()
+            else:
+                self.restart_attempt = True
+            return False
+        if self.is_pokemon_reroll_mode():
+            self.restart_attempt = True
+            if won:
+                self.log("Run won without a whitelist hit. Starting another attempt.")
+            else:
+                self.log("Run ended without a whitelist hit. Starting another attempt.")
+            return False
+        if won:
+            raise RuntimeError("Run reached win screen before target item appeared.")
+        raise RuntimeError("Run ended and Play Again was not available.")
+
+    def start_next_play_again_run(self):
+        worker_id = getattr(self.thread_local, "worker_id", 1)
+        worker_attempt = getattr(self.thread_local, "attempt_count", 0) + 1
+        self.thread_local.attempt_count = worker_attempt
+        prefix = f"B{worker_id} " if self.browser_count > 1 else ""
+        return self.reset_run_tracking(prefix=prefix)
+
+    def reset_run_tracking(self, prefix=""):
         with self.stats_lock:
             self.run_count += 1
             run_number = self.run_count
@@ -6289,6 +7256,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.maps_started = 0
         self.run_legendaries_seen = 0
         self.run_leaders_defeated = 0
+        self.last_leader_signature = None
         self.last_team_snapshot_signature = None
         self.last_team_snapshot = []
         self.last_passive_items_snapshot = []
@@ -6299,11 +7267,15 @@ class PokeLikeBotGUI(ctk.CTk):
         self.pending_passive_item_priority = None
         self.run_encounters_checked = 0
         self.run_target_encounters = 0
+        self.log(f"========== {prefix}RUN #{run_number} ==========")
+        return run_number
+
+    def run_single_attempt(self):
         worker_id = getattr(self.thread_local, "worker_id", 1)
         worker_attempt = getattr(self.thread_local, "attempt_count", 0) + 1
         self.thread_local.attempt_count = worker_attempt
         prefix = f"B{worker_id} " if self.browser_count > 1 else ""
-        self.log(f"========== {prefix}RUN #{run_number} ==========")
+        run_number = self.reset_run_tracking(prefix=prefix)
         if self.manual_first_attempt and worker_attempt == 1:
             if not self.driver:
                 raise RuntimeError("Open Browser first, navigate to the run screen, then press Start Bot.")
@@ -6323,6 +7295,7 @@ class PokeLikeBotGUI(ctk.CTk):
         while not self.stop_event.is_set():
             if self.stop_event.is_set():
                 return False
+            self.restart_chrome_if_due(worker_id)
             if self.handle_active_screen():
                 self.encounter_history.append(self.run_target_encounters)
                 self.update_stats_labels()
@@ -6343,6 +7316,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.thread_local.use_local = True
         self.thread_local.worker_id = worker_id
         self.thread_local.attempt_count = 0
+        self.thread_local.last_chrome_restart_at = time.time()
         self.driver = driver
         self.wait = WebDriverWait(driver, 30)
         try:
@@ -6370,6 +7344,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     time.sleep(0.4)
                     continue
                 if found:
+                    driver = self.driver
                     self.winning_driver = driver
                     self.stop_event.set()
                     self.close_other_drivers(driver)
