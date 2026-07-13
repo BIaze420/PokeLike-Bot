@@ -8,11 +8,12 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.filedialog as filedialog
 import tkinter.messagebox as messagebox
 import tempfile
 import urllib.request
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 
 import customtkinter as ctk
 from PIL import Image
@@ -27,7 +28,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_NAME = "PokeLike Bot"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 UPDATE_REPO = "BIaze420/PokeLike-Bot"
 UPDATE_API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 UPDATE_ASSET_NAMES = ("PokeLike Bot.exe", "PokeLike.Bot.exe")
@@ -58,8 +59,11 @@ _PROFILE_BASE = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or D
 SELENIUM_PROFILE_PATH = os.path.join(_PROFILE_BASE, APP_NAME, "selenium-profile")
 LOG_PATH = os.path.join(DATA_DIR, "pokelike_bot.log")
 MAX_BROWSER_COUNT = 67
-TARGET_ITEM = "shiny charm"
-TARGET_ITEM_ALIASES = ("shiny charm", "shiny hunter")
+SHOP_REROLL_PREWARM_COUNT = 2
+CHROME_DEBUG_PORT_BASE = 49220
+DEFAULT_ITEM_REROLL_TARGET = "shiny hunter"
+COMPLETE_POKEDEX_ITEM_TARGET = "legend lure"
+STARTING_ITEM_REROLL_ALIASES = ("shiny charm", "shiny hunter")
 STARTER_NAME = "dratini"
 STARTING_ITEM_PRIORITY = (
     "shiny hunter",
@@ -77,6 +81,31 @@ STARTING_ITEM_PRIORITY = (
     "wise glasses",
 )
 REGULAR_ITEM_PRIORITY = ("lucky egg", "leftovers", "shell bell", "dragon fang", "rare candy", "tm")
+DEX_TARGET_OFF = "Off"
+DEX_TARGET_NORMAL = "Missing normal Dex"
+DEX_TARGET_SHINY = "Missing shiny Dex"
+DEX_TARGET_BOTH = "Missing normal + shiny Dex"
+DEX_TARGET_OPTIONS = (DEX_TARGET_OFF, DEX_TARGET_NORMAL, DEX_TARGET_SHINY, DEX_TARGET_BOTH)
+FULL_RUN_DEX_PRIORITY_OPTIONS = DEX_TARGET_OPTIONS
+POKEMON_FILTER_PRIORITIZE = "Prioritize"
+POKEMON_FILTER_ONLY = "Only"
+POKEMON_FILTER_OPTIONS = (POKEMON_FILTER_PRIORITIZE, POKEMON_FILTER_ONLY)
+POKEMON_WHITELIST_PRIORITIZE = "Prioritize whitelist"
+POKEMON_WHITELIST_ONLY = "Only whitelist"
+POKEMON_WHITELIST_ONLY_OR_SHINY = "Only whitelist + shiny"
+POKEMON_WHITELIST_OPTIONS = (
+    POKEMON_WHITELIST_PRIORITIZE,
+    POKEMON_WHITELIST_ONLY,
+    POKEMON_WHITELIST_ONLY_OR_SHINY,
+)
+REROLL_COMPLETE_STOP_NOW = "Stop when target appears"
+REROLL_COMPLETE_ONE_FULL_RUN = "Complete 1 full run"
+REROLL_COMPLETE_CHAIN_FULL_RUNS = "Chain full runs"
+REROLL_COMPLETION_OPTIONS = (
+    REROLL_COMPLETE_STOP_NOW,
+    REROLL_COMPLETE_ONE_FULL_RUN,
+    REROLL_COMPLETE_CHAIN_FULL_RUNS,
+)
 # Master list of every passive item the bot recognizes. Any offered passive whose
 # name is NOT in here (and not in the user's priority/ignore lists) is treated as
 # unrecognized: it is recorded to unknown_starting_items.json AND auto-added to the
@@ -209,10 +238,35 @@ DEFAULT_PASSIVE_ITEM_DETAILS = {
 CONSUMABLE_ITEM_ALIASES = ("rare candy", "tm")
 MAIN_MOVE_TARGET_USES = 2
 POKEMON_TYPE_NAMES = (
-    "normal", "fire", "water", "grass", "electric", "ice", "fighting",
+    "normal", "fire", "water", "electric", "grass", "ice", "fighting",
     "poison", "ground", "flying", "psychic", "bug", "rock", "ghost",
     "dragon", "dark", "steel", "fairy",
 )
+POKEMON_TYPE_GROUPS = tuple(f"{type_name.title()} type" for type_name in POKEMON_TYPE_NAMES)
+POKEMON_GENERATION_OPTIONS = (
+    "Kanto", "Johto", "Hoenn", "Sinnoh", "Unova", "Kalos", "Alola", "Galar", "Paldea",
+)
+POKEMON_TYPE_COLORS = {
+    "Normal type": "#a8a77a",
+    "Fire type": "#ee8130",
+    "Water type": "#6390f0",
+    "Electric type": "#f7d02c",
+    "Grass type": "#7ac74c",
+    "Ice type": "#96d9d6",
+    "Fighting type": "#c22e28",
+    "Poison type": "#a33ea1",
+    "Ground type": "#e2bf65",
+    "Flying type": "#a98ff3",
+    "Psychic type": "#f95587",
+    "Bug type": "#a6b91a",
+    "Rock type": "#b6a136",
+    "Ghost type": "#735797",
+    "Dragon type": "#6f35fc",
+    "Dark type": "#705746",
+    "Steel type": "#b7b7ce",
+    "Fairy type": "#d685ad",
+    "General": "#94a3b8",
+}
 LEGENDARY_POKEMON_NAMES = {
     "articuno", "zapdos", "moltres", "mewtwo", "mew",
     "raikou", "entei", "suicune", "lugia", "ho-oh", "celebi",
@@ -221,6 +275,211 @@ LEGENDARY_POKEMON_NAMES = {
     "manaphy", "darkrai", "shaymin", "arceus",
     "victini", "cobalion", "terrakion", "virizion", "tornadus", "thundurus", "reshiram", "zekrom", "landorus",
     "kyurem", "keldeo", "meloetta", "genesect",
+}
+EVOLUTION_CHAIN_TEXT = """
+bulbasaur>ivysaur>venusaur
+charmander>charmeleon>charizard
+squirtle>wartortle>blastoise
+caterpie>metapod>butterfree
+weedle>kakuna>beedrill
+pidgey>pidgeotto>pidgeot
+pichu>pikachu>raichu
+nidoran f>nidorina>nidoqueen
+nidoran m>nidorino>nidoking
+cleffa>clefairy>clefable
+vulpix>ninetales
+igglybuff>jigglypuff>wigglytuff
+zubat>golbat>crobat
+oddish>gloom>vileplume
+oddish>gloom>bellossom
+poliwag>poliwhirl>poliwrath
+poliwag>poliwhirl>politoed
+abra>kadabra>alakazam
+machop>machoke>machamp
+bellsprout>weepinbell>victreebel
+geodude>graveler>golem
+slowpoke>slowbro
+slowpoke>slowking
+magnemite>magneton>magnezone
+onix>steelix
+rhyhorn>rhydon>rhyperior
+happiny>chansey>blissey
+tangela>tangrowth
+horsea>seadra>kingdra
+staryu>starmie
+scyther>scizor
+scyther>kleavor
+elekid>electabuzz>electivire
+magby>magmar>magmortar
+eevee>vaporeon
+eevee>jolteon
+eevee>flareon
+eevee>espeon
+eevee>umbreon
+eevee>leafeon
+eevee>glaceon
+eevee>sylveon
+porygon>porygon2>porygon z
+dratini>dragonair>dragonite
+chikorita>bayleef>meganium
+cyndaquil>quilava>typhlosion
+totodile>croconaw>feraligatr
+togepi>togetic>togekiss
+mareep>flaaffy>ampharos
+azurill>marill>azumarill
+hoppip>skiploom>jumpluff
+swinub>piloswine>mamoswine
+larvitar>pupitar>tyranitar
+treecko>grovyle>sceptile
+torchic>combusken>blaziken
+mudkip>marshtomp>swampert
+wurmple>silcoon>beautifly
+wurmple>cascoon>dustox
+ralts>kirlia>gardevoir
+ralts>kirlia>gallade
+slakoth>vigoroth>slaking
+aron>lairon>aggron
+trapinch>vibrava>flygon
+duskull>dusclops>dusknoir
+snorunt>glalie
+snorunt>froslass
+bagon>shelgon>salamence
+beldum>metang>metagross
+turtwig>grotle>torterra
+chimchar>monferno>infernape
+piplup>prinplup>empoleon
+starly>staravia>staraptor
+shinx>luxio>luxray
+gible>gabite>garchomp
+riolu>lucario
+snivy>servine>serperior
+tepig>pignite>emboar
+oshawott>dewott>samurott
+lillipup>herdier>stoutland
+roggenrola>boldore>gigalith
+timburr>gurdurr>conkeldurr
+tympole>palpitoad>seismitoad
+venipede>whirlipede>scolipede
+sandile>krokorok>krookodile
+litwick>lampent>chandelure
+axew>fraxure>haxorus
+klink>klang>klinklang
+tynamo>eelektrik>eelektross
+golett>golurk
+pawniard>bisharp>kingambit
+deino>zweilous>hydreigon
+chespin>quilladin>chesnaught
+fennekin>braixen>delphox
+froakie>frogadier>greninja
+fletchling>fletchinder>talonflame
+honedge>doublade>aegislash
+goomy>sliggoo>goodra
+rowlet>dartrix>decidueye
+litten>torracat>incineroar
+popplio>brionne>primarina
+pikipek>trumbeak>toucannon
+grubbin>charjabug>vikavolt
+bounsweet>steenee>tsareena
+jangmo o>hakamo o>kommo o
+grookey>thwackey>rillaboom
+scorbunny>raboot>cinderace
+sobble>drizzile>inteleon
+rookidee>corvisquire>corviknight
+rolycoly>carkol>coalossal
+applin>flapple
+applin>appletun
+applin>dipplin>hydrapple
+hatenna>hattrem>hatterene
+impidimp>morgrem>grimmsnarl
+dreepy>drakloak>dragapult
+sprigatito>floragato>meowscarada
+fuecoco>crocalor>skeledirge
+quaxly>quaxwell>quaquaval
+pawmi>pawmo>pawmot
+smoliv>dolliv>arboliva
+nacli>naclstack>garganacl
+charcadet>armarouge
+charcadet>ceruledge
+tinkatink>tinkatuff>tinkaton
+frigibax>arctibax>baxcalibur
+"""
+POKEMON_GENERATION_NAME_GROUPS = {
+    "kanto": """
+        bulbasaur ivysaur venusaur charmander charmeleon charizard squirtle wartortle blastoise
+        caterpie metapod butterfree weedle kakuna beedrill pidgey pidgeotto pidgeot pikachu raichu
+        nidoran f nidorina nidoqueen nidoran m nidorino nidoking clefairy clefable vulpix ninetales
+        jigglypuff wigglytuff zubat golbat oddish gloom vileplume poliwag poliwhirl poliwrath abra
+        kadabra alakazam machop machoke machamp bellsprout weepinbell victreebel geodude graveler
+        golem slowpoke slowbro magnemite magneton onix rhyhorn rhydon chansey tangela horsea seadra
+        staryu starmie scyther electabuzz magmar eevee vaporeon jolteon flareon porygon dratini
+        dragonair dragonite articuno zapdos moltres mewtwo mew
+    """,
+    "johto": """
+        pichu cleffa igglybuff crobat bellossom politoed slowking steelix blissey kingdra scizor
+        elekid magby espeon umbreon porygon2 chikorita bayleef meganium cyndaquil quilava typhlosion
+        totodile croconaw feraligatr togepi togetic mareep flaaffy ampharos azurill marill azumarill
+        hoppip skiploom jumpluff swinub piloswine larvitar pupitar tyranitar raikou entei suicune
+        lugia ho-oh celebi
+    """,
+    "hoenn": """
+        treecko grovyle sceptile torchic combusken blaziken mudkip marshtomp swampert wurmple silcoon
+        beautifly cascoon dustox ralts kirlia gardevoir slakoth vigoroth slaking aron lairon aggron
+        trapinch vibrava flygon duskull dusclops snorunt glalie bagon shelgon salamence beldum metang
+        metagross regirock regice registeel latias latios kyogre groudon rayquaza jirachi deoxys
+    """,
+    "sinnoh": """
+        magnezone rhyperior tangrowth electivire magmortar leafeon glaceon porygon z mamoswine
+        dusknoir froslass gallade togekiss turtwig grotle torterra chimchar monferno infernape piplup
+        prinplup empoleon starly staravia staraptor shinx luxio luxray gible gabite garchomp riolu
+        lucario uxie mesprit azelf dialga palkia heatran regigigas giratina cresselia phione manaphy
+        darkrai shaymin arceus
+    """,
+    "unova": """
+        snivy servine serperior tepig pignite emboar oshawott dewott samurott lillipup herdier stoutland
+        roggenrola boldore gigalith timburr gurdurr conkeldurr tympole palpitoad seismitoad venipede
+        whirlipede scolipede sandile krokorok krookodile litwick lampent chandelure axew fraxure haxorus
+        klink klang klinklang tynamo eelektrik eelektross golett golurk pawniard bisharp deino zweilous
+        hydreigon victini cobalion terrakion virizion tornadus thundurus reshiram zekrom landorus kyurem
+        keldeo meloetta genesect
+    """,
+    "kalos": """
+        chespin quilladin chesnaught fennekin braixen delphox froakie frogadier greninja fletchling
+        fletchinder talonflame honedge doublade aegislash goomy sliggoo goodra sylveon
+    """,
+    "alola": """
+        rowlet dartrix decidueye litten torracat incineroar popplio brionne primarina pikipek trumbeak
+        toucannon grubbin charjabug vikavolt bounsweet steenee tsareena jangmo o hakamo o kommo o
+    """,
+    "galar": """
+        grookey thwackey rillaboom scorbunny raboot cinderace sobble drizzile inteleon rookidee
+        corvisquire corviknight rolycoly carkol coalossal applin flapple appletun hatenna hattrem
+        hatterene impidimp morgrem grimmsnarl dreepy drakloak dragapult
+    """,
+    "paldea": """
+        sprigatito floragato meowscarada fuecoco crocalor skeledirge quaxly quaxwell quaquaval pawmi
+        pawmo pawmot smoliv dolliv arboliva nacli naclstack garganacl charcadet armarouge ceruledge
+        tinkatink tinkatuff tinkaton frigibax arctibax baxcalibur dipplin hydrapple
+    """,
+}
+POKEMON_TYPE_NAME_GROUPS = {
+    "dragon": "dratini dragonair dragonite horsea seadra kingdra trapinch vibrava flygon bagon shelgon salamence gible gabite garchomp axew fraxure haxorus deino zweilous hydreigon goomy sliggoo goodra jangmo o hakamo o kommo o applin flapple appletun dipplin hydrapple dreepy drakloak dragapult frigibax arctibax baxcalibur latias latios rayquaza dialga palkia giratina reshiram zekrom kyurem",
+    "bug": "caterpie metapod butterfree weedle kakuna beedrill scyther scizor wurmple silcoon beautifly cascoon dustox venipede whirlipede scolipede grubbin charjabug vikavolt",
+    "grass": "bulbasaur ivysaur venusaur oddish gloom vileplume bellossom bellsprout weepinbell victreebel tangela tangrowth chikorita bayleef meganium hoppip skiploom jumpluff treecko grovyle sceptile turtwig grotle torterra snivy servine serperior chespin quilladin chesnaught rowlet dartrix decidueye bounsweet steenee tsareena grookey thwackey rillaboom applin flapple appletun dipplin hydrapple sprigatito floragato meowscarada smoliv dolliv arboliva shaymin",
+    "fire": "charmander charmeleon charizard vulpix ninetales magby magmar magmortar cyndaquil quilava typhlosion torchic combusken blaziken chimchar monferno infernape tepig pignite emboar litwick lampent chandelure fennekin braixen delphox litten torracat incineroar scorbunny raboot cinderace rolycoly carkol coalossal fuecoco crocalor skeledirge charcadet armarouge ceruledge moltres entei heatran victini reshiram",
+    "water": "squirtle wartortle blastoise poliwag poliwhirl poliwrath politoed slowpoke slowbro slowking horsea seadra kingdra staryu starmie vaporeon totodile croconaw feraligatr azurill marill azumarill mudkip marshtomp swampert piplup prinplup empoleon tympole palpitoad seismitoad oshawott dewott samurott froakie frogadier greninja popplio brionne primarina sobble drizzile inteleon quaxly quaxwell quaquaval articuno suicune lugia kyogre palkia phione manaphy keldeo",
+    "electric": "pichu pikachu raichu magnemite magneton magnezone elekid electabuzz electivire mareep flaaffy ampharos shinx luxio luxray tynamo eelektrik eelektross grubbin charjabug vikavolt pawmi pawmo pawmot zapdos raikou thundurus zekrom",
+    "normal": "pidgey pidgeotto pidgeot cleffa clefairy clefable igglybuff jigglypuff wigglytuff happiny chansey blissey eevee porygon porygon2 porygon z togepi togetic starly staravia staraptor lillipup herdier stoutland",
+    "flying": "charizard butterfree pidgey pidgeotto pidgeot zubat golbat crobat scyther hoppip skiploom jumpluff togetic togekiss starly staravia staraptor fletchling fletchinder talonflame rowlet dartrix decidueye pikipek trumbeak toucannon rookidee corvisquire corviknight articuno zapdos moltres lugia ho-oh rayquaza tornadus landorus",
+    "poison": "bulbasaur ivysaur venusaur weedle kakuna beedrill nidoran f nidorina nidoqueen nidoran m nidorino nidoking zubat golbat crobat oddish gloom vileplume bellsprout weepinbell victreebel venipede whirlipede scolipede",
+    "ground": "geodude graveler golem onix rhyhorn rhydon rhyperior swinub piloswine mamoswine mudkip marshtomp swampert trapinch vibrava flygon turtwig grotle torterra gible gabite garchomp roggenrola boldore gigalith tympole palpitoad seismitoad sandile krokorok krookodile golett golurk groudon landorus",
+    "psychic": "abra kadabra alakazam staryu starmie ralts kirlia gardevoir gallade fennekin braixen delphox hatenna hattrem hatterene mewtwo mew celebi latias latios jirachi deoxys uxie mesprit azelf cresselia victini meloetta",
+    "rock": "geodude graveler golem onix rhydon rhyperior larvitar pupitar tyranitar aron lairon aggron roggenrola boldore gigalith rolycoly carkol coalossal nacli naclstack garganacl regirock",
+    "ice": "swinub piloswine mamoswine snorunt glalie froslass glaceon frigibax arctibax baxcalibur articuno regice kyurem",
+    "fighting": "poliwrath machop machoke machamp combusken blaziken gallade monferno infernape riolu lucario pignite emboar timburr gurdurr conkeldurr chesnaught hakamo o kommo o quaquaval cobalion terrakion virizion keldeo",
+    "ghost": "duskull dusclops dusknoir froslass litwick lampent chandelure golett golurk honedge doublade aegislash dreepy drakloak dragapult giratina",
+    "dark": "umbreon larvitar pupitar tyranitar sneasel sandile krokorok krookodile pawniard bisharp kingambit deino zweilous hydreigon impidimp morgrem grimmsnarl meowscarada incineroar greninja darkrai",
+    "steel": "magnemite magneton magnezone steelix scizor aron lairon aggron beldum metang metagross piplup prinplup empoleon riolu lucario klink klang klinklang pawniard bisharp kingambit honedge doublade aegislash corvisquire corviknight tinkatink tinkatuff tinkaton registeel dialga genesect",
+    "fairy": "cleffa clefairy clefable igglybuff jigglypuff wigglytuff azurill marill azumarill ralts kirlia gardevoir togepi togetic togekiss sylveon primarina impidimp morgrem grimmsnarl tinkatink tinkatuff tinkaton xerneas",
 }
 LEADER_OR_ELITE_TRAINER_NAMES = {
     "brock", "misty", "lt surge", "surge", "erika", "koga", "sabrina", "blaine", "giovanni",
@@ -242,9 +501,15 @@ LEADER_OR_ELITE_TRAINER_NAMES = {
     "rika", "poppy", "hassel", "geeta", "nemona", "clavell", "penny", "arven", "sada", "turo",
 }
 MODE_FULL_RUN = "Full run"
-MODE_SHINY_CHARM_REROLL = "Shiny Charm reroll"
+LEGACY_MODE_SHINY_CHARM_REROLL = "Shiny Charm reroll"
+MODE_ITEM_REROLL = "Item reroll"
+MODE_SHINY_CHARM_REROLL = MODE_ITEM_REROLL
 MODE_SHINY_POKEMON_REROLL = "Shiny Pokemon reroll"
 MODE_NORMAL_POKEMON_REROLL = "Normal Pokemon reroll"
+MODE_COMPLETE_POKEDEX = "Complete Pokedex"
+MODE_POKEGOLD_FARM = "Farm Pokegold"
+MODE_SHINY_SHOP_REROLL = "Shiny Pokemon shop reroll"
+MODE_LEGENDARY_SHOP_REROLL = "Legendary shop reroll"
 RUN_TARGET_CHALLENGE = "Challenge Mode"
 RUN_TARGET_WEEKLY = "Weekly Challenge"
 RUN_TARGET_DAILY = "Daily Challenge"
@@ -258,11 +523,20 @@ RUN_TARGET_OPTIONS = (
     *[f"Battle Tower - {region}" for region in TOWER_REGIONS],
     *[f"Story {mode} - {region}" for mode in STORY_MODES for region in STORY_REGIONS],
 )
-SCHEDULE_COMPLETION_OPTIONS = ("Wins", "Runs")
+SCHEDULE_COMPLETION_ATTEMPTS = "Attempts"
+SCHEDULE_COMPLETION_WINS = "Completed runs"
+SCHEDULE_COMPLETION_CHALLENGE = "Challenge complete"
+SCHEDULE_COMPLETION_POKEGOLD = "Pokegold"
+SCHEDULE_COMPLETION_OPTIONS = (
+    SCHEDULE_COMPLETION_ATTEMPTS,
+    SCHEDULE_COMPLETION_WINS,
+    SCHEDULE_COMPLETION_CHALLENGE,
+    SCHEDULE_COMPLETION_POKEGOLD,
+)
 DEFAULT_TASK_SCHEDULE = (
-    {"target": RUN_TARGET_DAILY, "goal": "Wins", "count": 1},
-    {"target": RUN_TARGET_WEEKLY, "goal": "Wins", "count": 1},
-    {"target": "Story Classic - Kanto", "goal": "Runs", "count": 100},
+    {"name": "Daily", "target": RUN_TARGET_DAILY, "goal": SCHEDULE_COMPLETION_CHALLENGE, "count": 1},
+    {"name": "Weekly", "target": RUN_TARGET_WEEKLY, "goal": SCHEDULE_COMPLETION_CHALLENGE, "count": 1},
+    {"name": "Kanto story", "target": "Story Classic - Kanto", "goal": SCHEDULE_COMPLETION_ATTEMPTS, "count": 100},
 )
 SETTINGS_PATH = os.path.join(DATA_DIR, "pokelike_settings.json")
 UNKNOWN_STARTING_ITEMS_PATH = os.path.join(
@@ -458,6 +732,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.pending_team_replace = False
         self.pending_replace_allow_any = False
         self.pending_replace_policy = "default"
+        self.pending_replace_add_clicked = False
         self.pending_passive_item_name = ""
         self.pending_passive_item_priority = None
         self.catch_reroll_used = False
@@ -472,6 +747,32 @@ class PokeLikeBotGUI(ctk.CTk):
         self.run_target_var = ctk.StringVar(value=self.settings.get("run_target", RUN_TARGET_OPTIONS[0]))
         self.starter_var = ctk.StringVar(value=self.settings.get("starter", STARTER_NAME.title()))
         self.target_pokemon_var = ctk.StringVar(value=self.settings.get("shiny_whitelist", ""))
+        self.shop_ignore_pokemon_var = ctk.StringVar(value=self.settings.get("shop_ignore_pokemon", ""))
+        self.evolution_preference_var = ctk.StringVar(value=self.settings.get("evolution_preference", ""))
+        self.dex_target_var = ctk.StringVar(value=self.settings.get("dex_target_mode", DEX_TARGET_OFF))
+        self.full_run_dex_priority_var = ctk.StringVar(
+            value=self.settings.get("full_run_dex_priority_mode", DEX_TARGET_OFF)
+        )
+        self.ignore_pokemon_var = ctk.BooleanVar(value=bool(self.settings.get("ignore_pokemon", False)))
+        self.ignore_pokecenter_var = ctk.BooleanVar(value=bool(self.settings.get("ignore_pokecenter", False)))
+        self.shiny_only_pokemon_var = ctk.BooleanVar(value=bool(self.settings.get("shiny_only_pokemon", False)))
+        self.no_tm_move_tutor_var = ctk.BooleanVar(value=bool(self.settings.get("no_tm_move_tutor", False)))
+        self.type_whitelist_var = ctk.StringVar(value=self.settings.get("pokemon_type_whitelist", ""))
+        self.type_filter_mode_var = ctk.StringVar(
+            value=self.settings.get("pokemon_type_filter_mode", POKEMON_FILTER_PRIORITIZE)
+        )
+        self.whitelist_filter_mode_var = ctk.StringVar(
+            value=self.settings.get("pokemon_whitelist_mode", POKEMON_WHITELIST_ONLY)
+        )
+        self.generation_whitelist_var = ctk.StringVar(value=self.settings.get("pokemon_generation_whitelist", ""))
+        self.dex_missing_summary_var = ctk.StringVar(value="Dex missing: not refreshed")
+        self.reroll_completion_var = ctk.StringVar(
+            value=self.settings.get("reroll_completion_mode", REROLL_COMPLETE_STOP_NOW)
+        )
+        self.item_reroll_target_var = ctk.StringVar(
+            value=self.settings.get("item_reroll_target", DEFAULT_ITEM_REROLL_TARGET.title())
+        )
+        self.pokegold_farm_target_var = ctk.StringVar(value=self.settings.get("pokegold_farm_target", "100000"))
         self.browser_count_var = ctk.StringVar(value=str(self.settings.get("browser_count", 1)))
         self.chrome_restart_minutes_var = ctk.StringVar(value=str(self.settings.get("chrome_restart_minutes", 0)))
         self.schedule_enabled_var = ctk.BooleanVar(value=bool(self.settings.get("schedule_enabled", False)))
@@ -483,6 +784,36 @@ class PokeLikeBotGUI(ctk.CTk):
         self.current_starter_name = STARTER_NAME
         self.current_target_pokemon = ""
         self.current_target_pokemon_list = []
+        self.current_shop_ignore_pokemon_list = []
+        self.current_manual_target_pokemon_list = []
+        self.current_evolution_preference_list = []
+        self.current_dex_target_mode = DEX_TARGET_OFF
+        self.current_dex_targets = []
+        self.current_dex_target_names = set()
+        self.current_dex_target_by_name = {}
+        self.current_dex_missing_counts = {}
+        self.current_ignore_pokemon = False
+        self.current_ignore_pokecenter = False
+        self.current_shiny_only_pokemon = False
+        self.current_no_tm_move_tutor = False
+        self.current_type_whitelist = set()
+        self.current_type_filter_mode = POKEMON_FILTER_PRIORITIZE
+        self.current_whitelist_filter_mode = POKEMON_WHITELIST_ONLY
+        self.current_generation_whitelist = set()
+        self.current_type_filter_names = set()
+        self.current_generation_filter_names = set()
+        self.cached_dex_targets = {}
+        self.cached_dex_target_mode = None
+        self.current_primary_target_names = set()
+        self.complete_pokedex_phase = ""
+        self.complete_pokedex_phase_label = ""
+        self.current_reroll_completion_mode = REROLL_COMPLETE_STOP_NOW
+        self.reroll_target_acquired = False
+        self.reroll_acquired_target_name = ""
+        self.reroll_chain_completed_targets = set()
+        self.current_item_reroll_target = DEFAULT_ITEM_REROLL_TARGET
+        self.current_item_reroll_targets = [DEFAULT_ITEM_REROLL_TARGET]
+        self.current_pokegold_farm_target = 100000
         self.starting_item_priority = self.parse_priority_text(
             self.settings.get("starting_item_priority", ""),
             STARTING_ITEM_PRIORITY,
@@ -502,6 +833,9 @@ class PokeLikeBotGUI(ctk.CTk):
         # is both applied (never picked) AND visible/editable in Item Priorities.
         self.merge_unknowns_into_ignore()
         self.priority_window = None
+        self.settings_window = None
+        self.settings_controls = []
+        self.dex_preload_thread = None
         self.schedule_window = None
         self.run_history_window = None
         self.run_history_list_frame = None
@@ -762,6 +1096,14 @@ class PokeLikeBotGUI(ctk.CTk):
         self.set_context_attr("pending_replace_policy", value)
 
     @property
+    def pending_replace_add_clicked(self):
+        return self.get_context_attr("pending_replace_add_clicked", False)
+
+    @pending_replace_add_clicked.setter
+    def pending_replace_add_clicked(self, value):
+        self.set_context_attr("pending_replace_add_clicked", value)
+
+    @property
     def pending_passive_item_name(self):
         return self.get_context_attr("pending_passive_item_name", "")
 
@@ -815,16 +1157,27 @@ class PokeLikeBotGUI(ctk.CTk):
                 data = json.load(settings_file)
         except Exception:
             return {}
+        return self.sanitize_settings_data(data)
+
+    def sanitize_settings_data(self, data):
         if not isinstance(data, dict):
             return {}
+        if isinstance(data.get("settings"), dict):
+            data = data["settings"]
         valid_modes = {
             MODE_FULL_RUN,
             MODE_SHINY_CHARM_REROLL,
             MODE_SHINY_POKEMON_REROLL,
             MODE_NORMAL_POKEMON_REROLL,
+            MODE_COMPLETE_POKEDEX,
+            MODE_POKEGOLD_FARM,
+            MODE_SHINY_SHOP_REROLL,
+            MODE_LEGENDARY_SHOP_REROLL,
         }
         settings = {}
         mode = data.get("mode")
+        if mode == LEGACY_MODE_SHINY_CHARM_REROLL:
+            mode = MODE_ITEM_REROLL
         if mode in valid_modes:
             settings["mode"] = mode
         run_target = data.get("run_target")
@@ -834,10 +1187,34 @@ class PokeLikeBotGUI(ctk.CTk):
             legacy_tower = data.get("tower")
             if isinstance(legacy_tower, str) and legacy_tower.strip():
                 settings["run_target"] = self.legacy_tower_to_run_target(legacy_tower)
-        for key in ["starter", "shiny_whitelist"]:
+        for key in [
+            "starter",
+            "shiny_whitelist",
+            "shop_ignore_pokemon",
+            "evolution_preference",
+            "item_reroll_target",
+            "pokegold_farm_target",
+            "pokemon_type_whitelist",
+            "pokemon_type_filter_mode",
+            "pokemon_whitelist_mode",
+            "pokemon_generation_whitelist",
+        ]:
             value = data.get(key)
             if isinstance(value, str):
                 settings[key] = value
+        if settings.get("pokemon_type_filter_mode") not in POKEMON_FILTER_OPTIONS:
+            settings.pop("pokemon_type_filter_mode", None)
+        if settings.get("pokemon_whitelist_mode") not in POKEMON_WHITELIST_OPTIONS:
+            settings.pop("pokemon_whitelist_mode", None)
+        dex_target_mode = data.get("dex_target_mode")
+        if dex_target_mode in DEX_TARGET_OPTIONS:
+            settings["dex_target_mode"] = dex_target_mode
+        full_run_dex_priority_mode = data.get("full_run_dex_priority_mode")
+        if full_run_dex_priority_mode in FULL_RUN_DEX_PRIORITY_OPTIONS:
+            settings["full_run_dex_priority_mode"] = full_run_dex_priority_mode
+        reroll_completion_mode = data.get("reroll_completion_mode")
+        if reroll_completion_mode in REROLL_COMPLETION_OPTIONS:
+            settings["reroll_completion_mode"] = reroll_completion_mode
         for key in ["starting_item_priority", "regular_item_priority", "starting_item_ignore"]:
             value = data.get(key)
             if isinstance(value, (str, list, tuple)):
@@ -851,7 +1228,15 @@ class PokeLikeBotGUI(ctk.CTk):
         chrome_restart_minutes = data.get("chrome_restart_minutes")
         if isinstance(chrome_restart_minutes, (int, float)) and chrome_restart_minutes >= 0:
             settings["chrome_restart_minutes"] = min(float(chrome_restart_minutes), 1440.0)
-        for key in ["manual_start", "headless", "schedule_enabled"]:
+        for key in [
+            "manual_start",
+            "headless",
+            "schedule_enabled",
+            "ignore_pokemon",
+            "ignore_pokecenter",
+            "shiny_only_pokemon",
+            "no_tm_move_tutor",
+        ]:
             value = data.get(key)
             if isinstance(value, bool):
                 settings[key] = value
@@ -889,30 +1274,245 @@ class PokeLikeBotGUI(ctk.CTk):
             return {"kind": "story", "name": region, "story_mode": mode.lower()}
         return {"kind": "challenge", "name": "Challenge Mode", "challenge": "challenge"}
 
+    def normalize_schedule_goal(self, value):
+        raw = " ".join(str(value or "").strip().split()).lower()
+        aliases = {
+            "run": SCHEDULE_COMPLETION_ATTEMPTS,
+            "runs": SCHEDULE_COMPLETION_ATTEMPTS,
+            "attempt": SCHEDULE_COMPLETION_ATTEMPTS,
+            "attempts": SCHEDULE_COMPLETION_ATTEMPTS,
+            "win": SCHEDULE_COMPLETION_WINS,
+            "wins": SCHEDULE_COMPLETION_WINS,
+            "completed run": SCHEDULE_COMPLETION_WINS,
+            "completed runs": SCHEDULE_COMPLETION_WINS,
+            "complete run": SCHEDULE_COMPLETION_WINS,
+            "complete runs": SCHEDULE_COMPLETION_WINS,
+            "challenge": SCHEDULE_COMPLETION_CHALLENGE,
+            "challenge complete": SCHEDULE_COMPLETION_CHALLENGE,
+            "complete challenge": SCHEDULE_COMPLETION_CHALLENGE,
+            "pokegold": SCHEDULE_COMPLETION_POKEGOLD,
+            "gold": SCHEDULE_COMPLETION_POKEGOLD,
+        }
+        return aliases.get(raw, value if value in SCHEDULE_COMPLETION_OPTIONS else SCHEDULE_COMPLETION_WINS)
+
     def parse_task_schedule(self, value, default_values=()):
         raw_steps = value if isinstance(value, list) and value else list(default_values)
         steps = []
         for item in raw_steps:
             if not isinstance(item, dict):
                 continue
+            settings = item.get("settings")
+            if not isinstance(settings, dict):
+                settings = {}
             target = item.get("target")
             if target not in RUN_TARGET_OPTIONS:
+                target = settings.get("run_target")
+            if target not in RUN_TARGET_OPTIONS:
                 continue
-            goal = str(item.get("goal", "Wins")).strip().title()
-            if goal not in SCHEDULE_COMPLETION_OPTIONS:
-                goal = "Wins"
+            goal = self.normalize_schedule_goal(item.get("goal", SCHEDULE_COMPLETION_WINS))
             try:
                 count = int(item.get("count", 1))
             except Exception:
                 count = 1
             starter = " ".join(str(item.get("starter") or "").strip().split())
+            max_count = 999999999 if goal == SCHEDULE_COMPLETION_POKEGOLD else 9999
+            name = " ".join(str(item.get("name") or "").strip().split())
+            parsed_settings = self.parse_task_settings_snapshot(settings)
             steps.append({
+                "name": name,
                 "target": target,
                 "starter": starter,
                 "goal": goal,
-                "count": max(1, min(count, 9999)),
+                "count": max(1, min(count, max_count)),
+                "settings": parsed_settings,
             })
         return steps or [dict(step) for step in DEFAULT_TASK_SCHEDULE]
+
+    def parse_task_settings_snapshot(self, value):
+        if not isinstance(value, dict):
+            return {}
+        result = {}
+        string_keys = {
+            "mode",
+            "run_target",
+            "starter",
+            "shiny_whitelist",
+            "shop_ignore_pokemon",
+            "evolution_preference",
+            "dex_target_mode",
+            "full_run_dex_priority_mode",
+            "reroll_completion_mode",
+            "item_reroll_target",
+            "pokegold_farm_target",
+            "pokemon_type_whitelist",
+            "pokemon_type_filter_mode",
+            "pokemon_whitelist_mode",
+            "pokemon_generation_whitelist",
+        }
+        bool_keys = {
+            "manual_start",
+            "headless",
+            "ignore_pokemon",
+            "ignore_pokecenter",
+            "shiny_only_pokemon",
+            "no_tm_move_tutor",
+        }
+        for key in string_keys:
+            raw = value.get(key)
+            if isinstance(raw, str):
+                result[key] = raw.strip()
+        if result.get("mode") not in {
+            MODE_FULL_RUN,
+            MODE_ITEM_REROLL,
+            MODE_SHINY_POKEMON_REROLL,
+            MODE_NORMAL_POKEMON_REROLL,
+            MODE_COMPLETE_POKEDEX,
+            MODE_POKEGOLD_FARM,
+            MODE_SHINY_SHOP_REROLL,
+            MODE_LEGENDARY_SHOP_REROLL,
+        }:
+            result.pop("mode", None)
+        if result.get("run_target") not in RUN_TARGET_OPTIONS:
+            result.pop("run_target", None)
+        if result.get("dex_target_mode") not in DEX_TARGET_OPTIONS:
+            result.pop("dex_target_mode", None)
+        if result.get("full_run_dex_priority_mode") not in FULL_RUN_DEX_PRIORITY_OPTIONS:
+            result.pop("full_run_dex_priority_mode", None)
+        if result.get("reroll_completion_mode") not in REROLL_COMPLETION_OPTIONS:
+            result.pop("reroll_completion_mode", None)
+        if result.get("pokemon_type_filter_mode") not in POKEMON_FILTER_OPTIONS:
+            result.pop("pokemon_type_filter_mode", None)
+        if result.get("pokemon_whitelist_mode") not in POKEMON_WHITELIST_OPTIONS:
+            result.pop("pokemon_whitelist_mode", None)
+        for key in bool_keys:
+            if isinstance(value.get(key), bool):
+                result[key] = bool(value.get(key))
+        for key in ["starting_item_priority", "regular_item_priority", "starting_item_ignore"]:
+            raw = value.get(key)
+            if isinstance(raw, (list, tuple, str)):
+                result[key] = self.parse_priority_text(raw, ())
+        starter_priorities = value.get("regular_item_priority_by_starter")
+        if isinstance(starter_priorities, dict):
+            result["regular_item_priority_by_starter"] = self.parse_starter_item_priority_map(starter_priorities)
+        return result
+
+    def current_task_settings_snapshot(self):
+        return {
+            "mode": self.mode_var.get(),
+            "manual_start": bool(self.manual_start_var.get()),
+            "headless": bool(self.headless_var.get()),
+            "run_target": self.run_target_var.get(),
+            "starter": self.starter_var.get().strip(),
+            "shiny_whitelist": self.target_pokemon_var.get().strip(),
+            "shop_ignore_pokemon": self.shop_ignore_pokemon_var.get().strip(),
+            "evolution_preference": self.evolution_preference_var.get().strip(),
+            "dex_target_mode": self.dex_target_var.get(),
+            "full_run_dex_priority_mode": self.full_run_dex_priority_var.get(),
+            "reroll_completion_mode": self.reroll_completion_var.get(),
+            "item_reroll_target": self.item_reroll_target_var.get().strip(),
+            "pokegold_farm_target": str(self.parse_pokegold_farm_target()),
+            "ignore_pokemon": bool(self.ignore_pokemon_var.get()),
+            "ignore_pokecenter": bool(self.ignore_pokecenter_var.get()),
+            "shiny_only_pokemon": bool(self.shiny_only_pokemon_var.get()),
+            "no_tm_move_tutor": bool(self.no_tm_move_tutor_var.get()),
+            "pokemon_type_whitelist": self.type_whitelist_var.get().strip(),
+            "pokemon_type_filter_mode": self.type_filter_mode_var.get(),
+            "pokemon_whitelist_mode": self.whitelist_filter_mode_var.get(),
+            "pokemon_generation_whitelist": self.generation_whitelist_var.get().strip(),
+            "starting_item_priority": list(self.starting_item_priority),
+            "regular_item_priority": list(self.regular_item_priority),
+            "regular_item_priority_by_starter": dict(self.regular_item_priority_by_starter),
+            "starting_item_ignore": list(self.starting_item_ignore),
+        }
+
+    def build_settings_payload(self):
+        return {
+            "mode": self.mode_var.get(),
+            "manual_start": bool(self.manual_start_var.get()),
+            "headless": bool(self.headless_var.get()),
+            "run_target": self.run_target_var.get(),
+            "starter": self.starter_var.get().strip(),
+            "shiny_whitelist": self.target_pokemon_var.get().strip(),
+            "shop_ignore_pokemon": self.shop_ignore_pokemon_var.get().strip(),
+            "evolution_preference": self.evolution_preference_var.get().strip(),
+            "dex_target_mode": self.dex_target_var.get(),
+            "full_run_dex_priority_mode": self.full_run_dex_priority_var.get(),
+            "ignore_pokemon": bool(self.ignore_pokemon_var.get()),
+            "ignore_pokecenter": bool(self.ignore_pokecenter_var.get()),
+            "shiny_only_pokemon": bool(self.shiny_only_pokemon_var.get()),
+            "no_tm_move_tutor": bool(self.no_tm_move_tutor_var.get()),
+            "pokemon_type_whitelist": self.type_whitelist_var.get().strip(),
+            "pokemon_type_filter_mode": self.type_filter_mode_var.get(),
+            "pokemon_whitelist_mode": self.whitelist_filter_mode_var.get(),
+            "pokemon_generation_whitelist": self.generation_whitelist_var.get().strip(),
+            "reroll_completion_mode": self.reroll_completion_var.get(),
+            "item_reroll_target": self.item_reroll_target_var.get().strip(),
+            "pokegold_farm_target": str(self.parse_pokegold_farm_target()),
+            "browser_count": self.parse_browser_count(),
+            "chrome_restart_minutes": self.parse_chrome_restart_minutes(),
+            "schedule_enabled": bool(self.schedule_enabled_var.get()),
+            "task_schedule": self.task_schedule,
+            "starting_item_priority": list(self.starting_item_priority),
+            "regular_item_priority": list(self.regular_item_priority),
+            "regular_item_priority_by_starter": dict(self.regular_item_priority_by_starter),
+            "starting_item_ignore": list(self.starting_item_ignore),
+        }
+
+    def apply_settings_payload_to_ui(self, settings):
+        settings = self.sanitize_settings_data(settings)
+        if not settings:
+            return False
+
+        def set_var(var, key):
+            if key in settings:
+                var.set(str(settings.get(key) or ""))
+
+        def set_bool(var, key):
+            if key in settings:
+                var.set(bool(settings.get(key)))
+
+        set_var(self.mode_var, "mode")
+        set_bool(self.manual_start_var, "manual_start")
+        set_bool(self.headless_var, "headless")
+        set_var(self.run_target_var, "run_target")
+        set_var(self.starter_var, "starter")
+        set_var(self.target_pokemon_var, "shiny_whitelist")
+        set_var(self.shop_ignore_pokemon_var, "shop_ignore_pokemon")
+        set_var(self.evolution_preference_var, "evolution_preference")
+        set_var(self.dex_target_var, "dex_target_mode")
+        set_var(self.full_run_dex_priority_var, "full_run_dex_priority_mode")
+        set_var(self.reroll_completion_var, "reroll_completion_mode")
+        set_var(self.item_reroll_target_var, "item_reroll_target")
+        set_var(self.pokegold_farm_target_var, "pokegold_farm_target")
+        set_bool(self.ignore_pokemon_var, "ignore_pokemon")
+        set_bool(self.ignore_pokecenter_var, "ignore_pokecenter")
+        set_bool(self.shiny_only_pokemon_var, "shiny_only_pokemon")
+        set_bool(self.no_tm_move_tutor_var, "no_tm_move_tutor")
+        set_var(self.type_whitelist_var, "pokemon_type_whitelist")
+        set_var(self.type_filter_mode_var, "pokemon_type_filter_mode")
+        set_var(self.whitelist_filter_mode_var, "pokemon_whitelist_mode")
+        set_var(self.generation_whitelist_var, "pokemon_generation_whitelist")
+        if "browser_count" in settings:
+            self.browser_count_var.set(str(settings.get("browser_count") or 1))
+        if "chrome_restart_minutes" in settings:
+            self.chrome_restart_minutes_var.set(str(settings.get("chrome_restart_minutes") or 0))
+        set_bool(self.schedule_enabled_var, "schedule_enabled")
+        if "task_schedule" in settings:
+            self.task_schedule = self.parse_task_schedule(settings.get("task_schedule"), DEFAULT_TASK_SCHEDULE)
+        if "starting_item_priority" in settings:
+            self.starting_item_priority = self.parse_priority_text(settings.get("starting_item_priority"), STARTING_ITEM_PRIORITY)
+        if "regular_item_priority" in settings:
+            self.regular_item_priority = self.parse_priority_text(settings.get("regular_item_priority"), REGULAR_ITEM_PRIORITY)
+        if "starting_item_ignore" in settings:
+            self.starting_item_ignore = self.parse_priority_text(settings.get("starting_item_ignore"), ())
+        if "regular_item_priority_by_starter" in settings:
+            self.regular_item_priority_by_starter = self.parse_starter_item_priority_map(
+                settings.get("regular_item_priority_by_starter", {})
+            )
+        self.merge_unknowns_into_ignore()
+        self.update_schedule_summary()
+        self.update_stats_labels()
+        return True
 
     def parse_priority_text(self, text, default_values):
         if isinstance(text, str) and text.strip():
@@ -948,18 +1548,263 @@ class PokeLikeBotGUI(ctk.CTk):
         return "\n".join(self.item_label_with_detail(value) for value in values)
 
     def is_pokemon_reroll_mode(self):
-        return self.current_mode in [MODE_SHINY_POKEMON_REROLL, MODE_NORMAL_POKEMON_REROLL]
+        return self.current_mode in [MODE_SHINY_POKEMON_REROLL, MODE_NORMAL_POKEMON_REROLL] or (
+            self.current_mode == MODE_COMPLETE_POKEDEX
+            and self.complete_pokedex_phase in {"normal_regular", "shiny_regular"}
+        )
+
+    def is_complete_pokedex_mode(self):
+        return self.current_mode == MODE_COMPLETE_POKEDEX
+
+    def is_legendary_shop_reroll_mode(self):
+        return self.current_mode == MODE_LEGENDARY_SHOP_REROLL
+
+    def is_shop_reroll_mode(self):
+        return self.current_mode in {MODE_SHINY_SHOP_REROLL, MODE_LEGENDARY_SHOP_REROLL}
+
+    def current_shop_egg_config(self):
+        if self.current_mode == MODE_LEGENDARY_SHOP_REROLL:
+            return {
+                "egg_type": "legendary",
+                "expected_price": 10000,
+                "label": "legendary egg",
+                "mode_label": "Legendary shop reroll",
+            }
+        return {
+            "egg_type": "shiny",
+            "expected_price": 2000,
+            "label": "shiny Pokemon egg",
+            "mode_label": "Shiny Pokemon shop reroll",
+        }
+
+    def complete_pokedex_phase_is_legendary(self):
+        return self.is_complete_pokedex_mode() and self.complete_pokedex_phase in {
+            "normal_legendary",
+            "shiny_legendary",
+        }
+
+    def is_target_item_reroll_mode(self):
+        return self.current_mode == MODE_ITEM_REROLL or (
+            self.complete_pokedex_phase_is_legendary()
+            and not bool(getattr(self, "reroll_target_acquired", False))
+        )
+
+    def should_complete_current_reroll_run(self):
+        return (
+            (self.is_pokemon_reroll_mode() or self.complete_pokedex_phase_is_legendary())
+            and bool(getattr(self, "reroll_target_acquired", False))
+            and (
+                self.is_complete_pokedex_mode()
+                or self.current_reroll_completion_mode in {
+                    REROLL_COMPLETE_ONE_FULL_RUN,
+                    REROLL_COMPLETE_CHAIN_FULL_RUNS,
+                }
+            )
+        )
+
+    def should_use_full_run_logic(self):
+        return self.current_mode in {MODE_FULL_RUN, MODE_POKEGOLD_FARM} or self.should_complete_current_reroll_run()
+
+    def parse_pokemon_target_list(self, text):
+        result = []
+        seen = set()
+        for raw in str(text or "").replace(";", ",").split(","):
+            name = self.normalize_pokemon_name(raw)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            result.append(name)
+        return result
+
+    def dex_target_wants_normal(self):
+        return self.current_dex_target_mode in {DEX_TARGET_NORMAL, DEX_TARGET_BOTH}
+
+    def dex_target_wants_shiny(self):
+        return self.current_dex_target_mode in {DEX_TARGET_SHINY, DEX_TARGET_BOTH}
+
+    def desired_reroll_shiny_state(self):
+        if self.current_mode == MODE_COMPLETE_POKEDEX:
+            return self.complete_pokedex_phase == "shiny_regular"
+        if self.current_mode == MODE_SHINY_POKEMON_REROLL:
+            return True
+        if self.current_mode == MODE_NORMAL_POKEMON_REROLL:
+            return False
+        if self.current_dex_target_mode == DEX_TARGET_SHINY:
+            return True
+        return False
 
     def normalize_item_name(self, name):
         name = self.strip_item_detail(name)
+        normalized = self.raw_normalize_item_name(name)
+        return self.canonical_item_name(normalized)
+
+    def raw_normalize_item_name(self, name):
         return " ".join(
             "".join(ch.lower() if ch.isalnum() else " " for ch in str(name or "")).split()
         )
+
+    def canonical_item_name(self, normalized):
+        normalized = str(normalized or "").strip()
+        if not normalized:
+            return ""
+        known_items = sorted(
+            {self.raw_normalize_item_name(item) for item in KNOWN_PASSIVE_ITEMS},
+            key=len,
+            reverse=True,
+        )
+        for item in known_items:
+            if normalized == item or normalized.startswith(f"{item} "):
+                return item
+
+        details = getattr(self, "passive_item_details", None)
+        if not details:
+            details = {
+                self.raw_normalize_item_name(name): self.clean_item_detail(detail, name)
+                for name, detail in DEFAULT_PASSIVE_ITEM_DETAILS.items()
+            }
+        detail_matches = []
+        for item, detail in details.items():
+            item_name = self.raw_normalize_item_name(item)
+            detail_text = self.raw_normalize_item_name(detail)
+            if len(normalized) >= 12 and detail_text and normalized in detail_text:
+                detail_matches.append(item_name)
+        if len(set(detail_matches)) == 1:
+            return detail_matches[0]
+        return normalized
 
     def normalize_pokemon_name(self, name):
         return " ".join(
             "".join(ch.lower() if ch.isalnum() else " " for ch in str(name or "")).split()
         )
+
+    def pokemon_group_name_set(self, raw_text):
+        normalized = f" {self.normalize_pokemon_name(raw_text)} "
+        known_names = set()
+        for raw_line in EVOLUTION_CHAIN_TEXT.splitlines():
+            for part in raw_line.split(">"):
+                name = self.normalize_pokemon_name(part)
+                if name:
+                    known_names.add(name)
+        known_names.update(self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES)
+        return {
+            name for name in known_names
+            if name and f" {name} " in normalized
+        }
+
+    def parse_type_whitelist(self, text):
+        raw_values = re.split(r"[,;\n]+", str(text or ""))
+        selected = set()
+        valid = set(POKEMON_TYPE_NAMES)
+        for raw_value in raw_values:
+            value = self.normalize_pokemon_name(raw_value.replace("type", ""))
+            if value in valid:
+                selected.add(value)
+        return selected
+
+    def parse_generation_whitelist(self, text):
+        aliases = {
+            "1": "kanto", "gen 1": "kanto", "generation 1": "kanto", "kanto": "kanto",
+            "2": "johto", "gen 2": "johto", "generation 2": "johto", "johto": "johto",
+            "3": "hoenn", "gen 3": "hoenn", "generation 3": "hoenn", "hoenn": "hoenn",
+            "4": "sinnoh", "gen 4": "sinnoh", "generation 4": "sinnoh", "sinnoh": "sinnoh",
+            "5": "unova", "gen 5": "unova", "generation 5": "unova", "unova": "unova",
+            "6": "kalos", "gen 6": "kalos", "generation 6": "kalos", "kalos": "kalos",
+            "7": "alola", "gen 7": "alola", "generation 7": "alola", "alola": "alola",
+            "8": "galar", "gen 8": "galar", "generation 8": "galar", "galar": "galar",
+            "9": "paldea", "gen 9": "paldea", "generation 9": "paldea", "paldea": "paldea",
+        }
+        selected = set()
+        for raw_value in re.split(r"[,;\n]+", str(text or "")):
+            value = self.normalize_pokemon_name(raw_value)
+            if value in aliases:
+                selected.add(aliases[value])
+        return selected
+
+    def names_for_type_filters(self, type_names):
+        names = set()
+        for type_name in type_names or []:
+            names.update(self.pokemon_group_name_set(POKEMON_TYPE_NAME_GROUPS.get(type_name, "")))
+        return names
+
+    def names_for_generation_filters(self, generation_names):
+        names = set()
+        for generation_name in generation_names or []:
+            names.update(self.pokemon_group_name_set(POKEMON_GENERATION_NAME_GROUPS.get(generation_name, "")))
+        return names
+
+    def pokemon_filters_enabled(self):
+        return bool(
+            self.current_ignore_pokemon
+            or self.current_shiny_only_pokemon
+            or self.current_manual_target_pokemon_list
+            or self.current_type_whitelist
+            or self.current_generation_whitelist
+        )
+
+    def pokemon_filter_payload(self):
+        return {
+            "ignorePokemon": bool(getattr(self, "current_ignore_pokemon", False)),
+            "shinyOnly": bool(getattr(self, "current_shiny_only_pokemon", False)),
+            "manualNames": list(getattr(self, "current_manual_target_pokemon_list", []) or []),
+            "typeNames": list(getattr(self, "current_type_filter_names", set()) or []),
+            "generationNames": list(getattr(self, "current_generation_filter_names", set()) or []),
+            "typeWhitelist": list(getattr(self, "current_type_whitelist", set()) or []),
+            "typeMode": getattr(self, "current_type_filter_mode", POKEMON_FILTER_PRIORITIZE),
+            "whitelistMode": getattr(self, "current_whitelist_filter_mode", POKEMON_WHITELIST_ONLY),
+            "generationWhitelist": list(getattr(self, "current_generation_whitelist", set()) or []),
+        }
+
+    def pokemon_name_allowed_by_filters(self, name, shiny=False):
+        key = self.normalize_pokemon_name(name)
+        if getattr(self, "current_ignore_pokemon", False):
+            return False
+        if getattr(self, "current_shiny_only_pokemon", False) and not shiny:
+            return False
+        manual_names = set(getattr(self, "current_manual_target_pokemon_list", []) or [])
+        whitelist_mode = getattr(self, "current_whitelist_filter_mode", POKEMON_WHITELIST_ONLY)
+        if manual_names and whitelist_mode == POKEMON_WHITELIST_ONLY and key not in manual_names:
+            return False
+        if manual_names and whitelist_mode == POKEMON_WHITELIST_ONLY_OR_SHINY and key not in manual_names and not shiny:
+            return False
+        if (
+            getattr(self, "current_type_whitelist", set())
+            and getattr(self, "current_type_filter_mode", POKEMON_FILTER_PRIORITIZE) == POKEMON_FILTER_ONLY
+            and key not in getattr(self, "current_type_filter_names", set())
+        ):
+            return False
+        if getattr(self, "current_generation_whitelist", set()) and key not in getattr(self, "current_generation_filter_names", set()):
+            return False
+        return True
+
+    def evolution_predecessor_map(self):
+        cached = getattr(self, "_evolution_predecessor_map", None)
+        if cached is not None:
+            return cached
+        predecessor_map = {}
+        for raw_line in EVOLUTION_CHAIN_TEXT.splitlines():
+            chain = [
+                self.normalize_pokemon_name(part)
+                for part in raw_line.split(">")
+                if self.normalize_pokemon_name(part)
+            ]
+            for index, name in enumerate(chain):
+                if index <= 0:
+                    predecessor_map.setdefault(name, set())
+                    continue
+                predecessor_map.setdefault(name, set()).update(chain[:index])
+        self._evolution_predecessor_map = predecessor_map
+        return predecessor_map
+
+    def evolution_aliases_for_target(self, name, aliases=None):
+        result = []
+        for alias in list(aliases or []) + [name]:
+            key = self.normalize_pokemon_name(alias)
+            if key and key not in result:
+                result.append(key)
+        for prevo in sorted(self.evolution_predecessor_map().get(self.normalize_pokemon_name(name), set())):
+            if prevo and prevo not in result:
+                result.append(prevo)
+        return result
 
     def current_starter_key(self):
         thread_local = getattr(self, "thread_local", None)
@@ -976,8 +1821,15 @@ class PokeLikeBotGUI(ctk.CTk):
     def active_regular_item_priority(self):
         key = self.current_starter_key()
         if key and key in self.regular_item_priority_by_starter:
-            return self.regular_item_priority_by_starter[key]
-        return self.regular_item_priority
+            priority = self.regular_item_priority_by_starter[key]
+        else:
+            priority = self.regular_item_priority
+        if getattr(self, "current_no_tm_move_tutor", False):
+            return [
+                item for item in priority
+                if self.normalize_item_name(item) != "tm"
+            ]
+        return priority
 
     def strip_item_detail(self, text):
         text = str(text or "").strip()
@@ -988,8 +1840,8 @@ class PokeLikeBotGUI(ctk.CTk):
     def clean_item_detail(self, detail, name=""):
         detail = " ".join(str(detail or "").replace("\n", " ").split())
         if name:
-            normalized_name = self.normalize_item_name(name)
-            normalized_detail = self.normalize_item_name(detail)
+            normalized_name = self.raw_normalize_item_name(name)
+            normalized_detail = self.raw_normalize_item_name(detail)
             if normalized_name and normalized_detail.startswith(normalized_name):
                 detail = detail[len(str(name).strip()):].strip()
         for prefix in ("Passive", "Starting Item", "Held Item", "Item"):
@@ -1046,7 +1898,7 @@ class PokeLikeBotGUI(ctk.CTk):
             matches.sort(key=lambda item: item[0])
             return f"{matches[0][1].title()} type"
 
-        return find_type(detail) or find_type(name, allow_bare_type=True) or "General"
+        return find_type(detail, allow_bare_type=True) or "General"
 
     def load_passive_item_details(self):
         details = {
@@ -1159,27 +2011,69 @@ class PokeLikeBotGUI(ctk.CTk):
         ]
 
     def save_settings(self):
-        settings = {
-            "mode": self.mode_var.get(),
-            "manual_start": bool(self.manual_start_var.get()),
-            "headless": bool(self.headless_var.get()),
-            "run_target": self.run_target_var.get(),
-            "starter": self.starter_var.get().strip(),
-            "shiny_whitelist": self.target_pokemon_var.get().strip(),
-            "browser_count": self.parse_browser_count(),
-            "chrome_restart_minutes": self.parse_chrome_restart_minutes(),
-            "schedule_enabled": bool(self.schedule_enabled_var.get()),
-            "task_schedule": self.task_schedule,
-            "starting_item_priority": self.starting_item_priority,
-            "regular_item_priority": self.regular_item_priority,
-            "regular_item_priority_by_starter": self.regular_item_priority_by_starter,
-            "starting_item_ignore": self.starting_item_ignore,
-        }
+        settings = self.build_settings_payload()
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as settings_file:
                 json.dump(settings, settings_file, indent=2)
         except Exception as exc:
             self.log(f"Could not save settings: {exc}")
+
+    def export_configuration(self):
+        self.save_settings()
+        default_name = f"pokelike-bot-config-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        path = filedialog.asksaveasfilename(
+            parent=self.settings_window or self,
+            title="Export configuration",
+            initialfile=default_name,
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        payload = {
+            "config_format": "pokelike-bot-config",
+            "config_version": 1,
+            "app": APP_NAME,
+            "app_version": APP_VERSION,
+            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "settings": self.build_settings_payload(),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as config_file:
+                json.dump(payload, config_file, indent=2)
+            self.log(f"Configuration exported: {path}")
+            messagebox.showinfo(APP_NAME, "Configuration exported.", parent=self.settings_window or self)
+        except Exception as exc:
+            self.log(f"Could not export configuration: {exc}")
+            messagebox.showerror(APP_NAME, f"Could not export configuration:\n\n{exc}", parent=self.settings_window or self)
+
+    def import_configuration(self):
+        path = filedialog.askopenfilename(
+            parent=self.settings_window or self,
+            title="Import configuration",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as config_file:
+                payload = json.load(config_file)
+        except Exception as exc:
+            self.log(f"Could not read configuration: {exc}")
+            messagebox.showerror(APP_NAME, f"Could not read configuration:\n\n{exc}", parent=self.settings_window or self)
+            return
+        if not messagebox.askyesno(
+            APP_NAME,
+            "Import this configuration and replace the current bot settings?",
+            parent=self.settings_window or self,
+        ):
+            return
+        if not self.apply_settings_payload_to_ui(payload):
+            messagebox.showerror(APP_NAME, "This file does not contain a valid PokeLike Bot configuration.", parent=self.settings_window or self)
+            return
+        self.save_settings()
+        self.log(f"Configuration imported: {path}")
+        messagebox.showinfo(APP_NAME, "Configuration imported.", parent=self.settings_window or self)
 
     def build_gui(self):
         self.grid_columnconfigure(0, weight=1)
@@ -1249,116 +2143,104 @@ class PokeLikeBotGUI(ctk.CTk):
         self.money_label = self.create_stat(controls, "Pokegold", "0", 2, 1)
         self.money_per_hour_label = self.create_stat(controls, "Pokegold / hour", "0/h", 2, 2)
 
-        mode_box = ctk.CTkFrame(controls, fg_color="transparent")
-        mode_box.grid(row=3, column=0, columnspan=3, padx=12, pady=(0, 8), sticky="ew")
-        mode_box.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(mode_box, text="Mode", text_color="gray70", width=76, anchor="w").grid(
+        setup_box = ctk.CTkFrame(controls, fg_color="transparent")
+        setup_box.grid(row=3, column=0, columnspan=3, padx=12, pady=(0, 8), sticky="ew")
+        setup_box.grid_columnconfigure(1, weight=1)
+        setup_box.grid_columnconfigure(3, weight=1)
+
+        ctk.CTkLabel(setup_box, text="Mode", text_color="gray70", width=76, anchor="w").grid(
             row=0, column=0, padx=(0, 8), sticky="w"
         )
-        self.mode_selector = ctk.CTkSegmentedButton(
-            mode_box,
+        self.mode_selector = ctk.CTkOptionMenu(
+            setup_box,
             values=[
                 MODE_FULL_RUN,
                 MODE_SHINY_CHARM_REROLL,
                 MODE_SHINY_POKEMON_REROLL,
                 MODE_NORMAL_POKEMON_REROLL,
+                MODE_COMPLETE_POKEDEX,
+                MODE_POKEGOLD_FARM,
+                MODE_SHINY_SHOP_REROLL,
+                MODE_LEGENDARY_SHOP_REROLL,
             ],
             variable=self.mode_var,
         )
-        self.mode_selector.grid(row=0, column=1, sticky="ew")
+        self.mode_selector.grid(row=0, column=1, padx=(0, 18), sticky="ew")
 
-        setup_box = ctk.CTkFrame(controls, fg_color="transparent")
-        setup_box.grid(row=4, column=0, columnspan=3, padx=12, pady=(0, 8), sticky="ew")
-        setup_box.grid_columnconfigure((1, 3, 5), weight=1)
-
-        ctk.CTkLabel(setup_box, text="Run target", text_color="gray70", width=76, anchor="w").grid(
-            row=0, column=0, padx=(0, 8), sticky="w"
-        )
+        ctk.CTkLabel(setup_box, text="Stage", text_color="gray70").grid(row=0, column=2, padx=(0, 8), sticky="w")
         self.run_target_selector = ctk.CTkOptionMenu(
             setup_box,
             values=list(RUN_TARGET_OPTIONS),
             variable=self.run_target_var,
         )
-        self.run_target_selector.grid(row=0, column=1, padx=(0, 12), sticky="ew")
+        self.run_target_selector.grid(row=0, column=3, padx=(0, 0), sticky="ew")
 
-        ctk.CTkLabel(setup_box, text="Starter", text_color="gray70").grid(row=0, column=2, padx=(0, 8), sticky="w")
+        ctk.CTkLabel(setup_box, text="Starter", text_color="gray70", width=76, anchor="w").grid(
+            row=1, column=0, padx=(0, 8), pady=(10, 0), sticky="w"
+        )
         self.starter_entry = ctk.CTkEntry(setup_box, textvariable=self.starter_var, placeholder_text="Dratini")
-        self.starter_entry.grid(row=0, column=3, padx=(0, 12), sticky="ew")
+        self.starter_entry.grid(row=1, column=1, padx=(0, 18), pady=(10, 0), sticky="ew")
 
-        ctk.CTkLabel(setup_box, text="Pokemon whitelist", text_color="gray70").grid(row=0, column=4, padx=(0, 8), sticky="w")
+        ctk.CTkLabel(setup_box, text="Pokemon whitelist", text_color="gray70").grid(
+            row=1, column=2, padx=(0, 8), pady=(10, 0), sticky="w"
+        )
         self.target_pokemon_entry = ctk.CTkEntry(setup_box, textvariable=self.target_pokemon_var, placeholder_text="Bagon, Ralts, Riolu")
-        self.target_pokemon_entry.grid(row=0, column=5, sticky="ew")
+        self.target_pokemon_entry.grid(row=1, column=3, pady=(10, 0), sticky="ew")
 
-        options_box = ctk.CTkFrame(controls, fg_color="transparent")
-        options_box.grid(row=5, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="ew")
-        options_box.grid_columnconfigure(0, weight=1, uniform="options")
-        options_box.grid_columnconfigure(1, weight=1, uniform="options")
+        ctk.CTkLabel(setup_box, text="Shop ignore list", text_color="gray70", width=76, anchor="w").grid(
+            row=2, column=0, padx=(0, 8), pady=(10, 0), sticky="w"
+        )
+        self.shop_ignore_pokemon_entry = ctk.CTkEntry(
+            setup_box,
+            textvariable=self.shop_ignore_pokemon_var,
+            placeholder_text="Moltres, Zapdos, Articuno",
+        )
+        self.shop_ignore_pokemon_entry.grid(row=2, column=1, columnspan=3, pady=(10, 0), sticky="ew")
 
-        manual_box = ctk.CTkFrame(options_box, corner_radius=10, fg_color="#151f2c")
-        manual_box.grid(row=0, column=0, padx=(0, 6), sticky="nsew")
-        manual_box.grid_columnconfigure(0, weight=1)
-        manual_box.grid_columnconfigure(2, weight=0)
+        self.dex_missing_summary_label = ctk.CTkLabel(
+            setup_box,
+            textvariable=self.dex_missing_summary_var,
+            text_color="gray70",
+            anchor="w",
+        )
+        self.dex_missing_summary_label.grid(row=3, column=0, columnspan=4, pady=(8, 0), sticky="ew")
+
+        browser_box = ctk.CTkFrame(controls, fg_color="transparent")
+        browser_box.grid(row=4, column=0, columnspan=3, padx=12, pady=(0, 8), sticky="ew")
+        browser_box.grid_columnconfigure(0, weight=1)
+        browser_box.grid_columnconfigure(1, weight=1)
+        browser_box.grid_columnconfigure(3, weight=0)
         self.manual_start_checkbox = ctk.CTkCheckBox(
-            manual_box,
+            browser_box,
             text="Use current run screen on first attempt",
             variable=self.manual_start_var,
         )
-        self.manual_start_checkbox.grid(row=0, column=0, padx=12, pady=(10, 0), sticky="w")
+        self.manual_start_checkbox.grid(row=0, column=0, padx=(0, 12), sticky="w")
         self.headless_checkbox = ctk.CTkCheckBox(
-            manual_box,
+            browser_box,
             text="Run Chrome hidden (headless)",
             variable=self.headless_var,
         )
-        self.headless_checkbox.grid(row=1, column=0, padx=12, pady=(6, 10), sticky="w")
-        ctk.CTkLabel(manual_box, text="Browsers", text_color="gray70").grid(row=0, column=1, padx=(12, 8), pady=(10, 0), sticky="e")
-        self.browser_count_entry = ctk.CTkEntry(manual_box, textvariable=self.browser_count_var, width=70)
-        self.browser_count_entry.grid(row=0, column=2, padx=(0, 12), pady=(10, 0), sticky="e")
-        ctk.CTkLabel(manual_box, text="Restart Chrome (min)", text_color="gray70").grid(
-            row=1, column=1, padx=(12, 8), pady=(6, 10), sticky="e"
+        self.headless_checkbox.grid(row=0, column=1, padx=(0, 12), sticky="w")
+        ctk.CTkLabel(browser_box, text="Browsers", text_color="gray70").grid(
+            row=0, column=2, padx=(8, 8), sticky="e"
+        )
+        self.browser_count_entry = ctk.CTkEntry(browser_box, textvariable=self.browser_count_var, width=70)
+        self.browser_count_entry.grid(row=0, column=3, padx=(0, 12), sticky="e")
+        ctk.CTkLabel(browser_box, text="Restart Chrome (min)", text_color="gray70").grid(
+            row=0, column=4, padx=(8, 8), sticky="e"
         )
         self.chrome_restart_entry = ctk.CTkEntry(
-            manual_box,
+            browser_box,
             textvariable=self.chrome_restart_minutes_var,
             width=70,
             placeholder_text="0",
         )
-        self.chrome_restart_entry.grid(row=1, column=2, padx=(0, 12), pady=(6, 10), sticky="e")
-
-        schedule_box = ctk.CTkFrame(options_box, corner_radius=10, fg_color="#111827")
-        schedule_box.grid(row=0, column=1, padx=(6, 0), sticky="nsew")
-        schedule_box.grid_columnconfigure(0, weight=1)
-        schedule_top = ctk.CTkFrame(schedule_box, fg_color="transparent")
-        schedule_top.grid(row=0, column=0, padx=12, pady=(10, 4), sticky="ew")
-        schedule_top.grid_columnconfigure(0, weight=1)
-        self.schedule_checkbox = ctk.CTkCheckBox(
-            schedule_top,
-            text="Task schedule",
-            variable=self.schedule_enabled_var,
-            command=self.update_schedule_summary,
-        )
-        self.schedule_checkbox.grid(row=0, column=0, sticky="w")
-        self.schedule_button = ctk.CTkButton(
-            schedule_top,
-            text="Edit",
-            command=self.open_schedule_window,
-            width=72,
-            height=30,
-        )
-        self.schedule_button.grid(row=0, column=1, padx=(10, 0), sticky="e")
-        self.schedule_summary_label = ctk.CTkLabel(
-            schedule_box,
-            text="",
-            text_color="gray78",
-            anchor="w",
-            justify="left",
-            wraplength=360,
-        )
-        self.schedule_summary_label.grid(row=1, column=0, padx=12, pady=(0, 10), sticky="ew")
-        self.update_schedule_summary()
+        self.chrome_restart_entry.grid(row=0, column=5, sticky="e")
 
         button_box = ctk.CTkFrame(controls, fg_color="transparent")
-        button_box.grid(row=6, column=0, columnspan=3, padx=12, pady=(2, 14), sticky="ew")
-        button_box.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
+        button_box.grid(row=5, column=0, columnspan=3, padx=12, pady=(2, 14), sticky="ew")
+        button_box.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.open_browser_button = ctk.CTkButton(button_box, text="Open Browser", command=self.open_browser, height=38)
         self.open_browser_button.grid(row=0, column=0, padx=(0, 6), sticky="ew")
@@ -1377,13 +2259,29 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         self.stop_button.grid(row=0, column=2, padx=(6, 0), sticky="ew")
 
+        self.refresh_dex_button = ctk.CTkButton(
+            button_box,
+            text="Refresh Dex",
+            command=self.refresh_dex_targets_from_ui,
+            height=38,
+        )
+        self.refresh_dex_button.grid(row=0, column=3, padx=(12, 0), sticky="ew")
+
+        self.settings_button = ctk.CTkButton(
+            button_box,
+            text="Settings",
+            command=self.open_settings_window,
+            height=38,
+        )
+        self.settings_button.grid(row=1, column=0, padx=(0, 6), pady=(8, 0), sticky="ew")
+
         self.priority_button = ctk.CTkButton(
             button_box,
             text="Item priorities",
             command=self.open_priority_window,
             height=38,
         )
-        self.priority_button.grid(row=0, column=3, padx=(12, 6), sticky="ew")
+        self.priority_button.grid(row=1, column=1, padx=6, pady=(8, 0), sticky="ew")
 
         self.run_history_button = ctk.CTkButton(
             button_box,
@@ -1391,7 +2289,7 @@ class PokeLikeBotGUI(ctk.CTk):
             command=self.open_run_history_window,
             height=38,
         )
-        self.run_history_button.grid(row=0, column=4, padx=(6, 0), sticky="ew")
+        self.run_history_button.grid(row=1, column=2, columnspan=2, padx=(6, 0), pady=(8, 0), sticky="ew")
 
     def create_stat(self, parent, label, value, row, column):
         box = ctk.CTkFrame(parent, corner_radius=10)
@@ -1406,19 +2304,319 @@ class PokeLikeBotGUI(ctk.CTk):
         value_label.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="w")
         return value_label
 
+    def configure_settings_controls(self, state):
+        live_controls = []
+        for widget in getattr(self, "settings_controls", []):
+            try:
+                if widget.winfo_exists():
+                    widget.configure(state=state)
+                    live_controls.append(widget)
+            except Exception:
+                pass
+        self.settings_controls = live_controls
+
+    def update_dex_missing_summary(self, counts=None):
+        counts = counts or {}
+        self.current_dex_missing_counts = counts
+        normal = counts.get("normal") or {}
+        shiny = counts.get("shiny") or {}
+        text = (
+            "Dex missing: "
+            f"Normal {int(normal.get('total') or 0)} [{int(normal.get('legendary') or 0)} legendary] | "
+            f"Shiny {int(shiny.get('total') or 0)} [{int(shiny.get('legendary') or 0)} legendary]"
+        )
+        self.safe_ui(lambda: self.dex_missing_summary_var.set(text))
+
+    def refresh_dex_targets_from_ui(self):
+        if self.dex_preload_thread and self.dex_preload_thread.is_alive():
+            return
+        drivers = self.get_live_drivers()
+        if not drivers:
+            self.log("Dex targets: open a browser first, then press Refresh Dex.")
+            return
+        mode = (
+            self.full_run_dex_priority_var.get()
+            if self.mode_var.get() == MODE_FULL_RUN
+            else DEX_TARGET_BOTH
+            if self.mode_var.get() == MODE_COMPLETE_POKEDEX
+            else self.dex_target_var.get()
+        )
+        if mode not in DEX_TARGET_OPTIONS or mode == DEX_TARGET_OFF:
+            self.log("Dex targets: choose a Dex target mode or Full run Dex priority in Settings before refreshing.")
+            return
+        self.refresh_dex_button.configure(state="disabled")
+        self.dex_preload_thread = threading.Thread(
+            target=self.refresh_dex_targets_worker,
+            args=(drivers[0], mode),
+            daemon=True,
+        )
+        self.dex_preload_thread.start()
+
+    def refresh_dex_targets_worker(self, driver, target_mode):
+        self.thread_local.use_local = True
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 20)
+        try:
+            targets = self.collect_missing_dex_targets(target_mode)
+            manual_targets = self.parse_pokemon_target_list(self.target_pokemon_var.get())
+            self.current_dex_target_mode = target_mode
+            self.current_manual_target_pokemon_list = manual_targets
+            self.current_target_pokemon_list = self.build_current_pokemon_targets(manual_targets, targets)
+            self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+            if targets:
+                self.log(f"Dex targets: refresh complete; {len(targets)} missing target(s) available.")
+            else:
+                self.log("Dex targets: refresh completed, but no missing targets were found.")
+        except Exception as exc:
+            self.log(f"Dex targets: refresh failed ({exc}).")
+        finally:
+            self.clear_thread_driver()
+            self.safe_ui(lambda: self.refresh_dex_button.configure(state="normal"))
+
+    def open_settings_window(self):
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.bring_popup_to_front(self.settings_window)
+            return
+
+        window = ctk.CTkToplevel(self)
+        window.title("Settings")
+        window.geometry("760x520")
+        window.minsize(680, 460)
+        window.grid_columnconfigure(0, weight=1)
+        window.grid_rowconfigure(0, weight=1)
+        self.settings_window = window
+        self.settings_controls = []
+        self.prepare_popup_window(window)
+
+        content = ctk.CTkScrollableFrame(window, corner_radius=12)
+        content.grid(row=0, column=0, padx=16, pady=16, sticky="nsew")
+        content.grid_columnconfigure(0, weight=1)
+
+        def register(widget):
+            self.settings_controls.append(widget)
+            return widget
+
+        run_box = ctk.CTkFrame(content, corner_radius=10, fg_color="#111827")
+        run_box.grid(row=0, column=0, padx=4, pady=(4, 10), sticky="ew")
+        run_box.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(run_box, text="Run Settings", font=ctk.CTkFont(size=15, weight="bold")).grid(
+            row=0, column=0, columnspan=2, padx=12, pady=(12, 8), sticky="w"
+        )
+        ctk.CTkLabel(run_box, text="Dex targets", text_color="gray70").grid(
+            row=1, column=0, padx=12, pady=6, sticky="w"
+        )
+        self.dex_target_selector = register(ctk.CTkOptionMenu(
+            run_box,
+            values=list(DEX_TARGET_OPTIONS),
+            variable=self.dex_target_var,
+        ))
+        self.dex_target_selector.grid(row=1, column=1, padx=12, pady=6, sticky="ew")
+
+        ctk.CTkLabel(run_box, text="Full run Dex priority", text_color="gray70").grid(
+            row=2, column=0, padx=12, pady=6, sticky="w"
+        )
+        self.full_run_dex_priority_selector = register(ctk.CTkOptionMenu(
+            run_box,
+            values=list(FULL_RUN_DEX_PRIORITY_OPTIONS),
+            variable=self.full_run_dex_priority_var,
+        ))
+        self.full_run_dex_priority_selector.grid(row=2, column=1, padx=12, pady=6, sticky="ew")
+
+        filters_box = ctk.CTkFrame(run_box, corner_radius=8, fg_color="#0b1220")
+        filters_box.grid(row=3, column=0, columnspan=2, padx=12, pady=6, sticky="ew")
+        filters_box.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(filters_box, text="Full-run filters", font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, columnspan=2, padx=10, pady=(10, 4), sticky="w"
+        )
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Ignore all Pokemon",
+            variable=self.ignore_pokemon_var,
+        )).grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Avoid Pokecenter",
+            variable=self.ignore_pokecenter_var,
+        )).grid(row=1, column=1, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Only take shiny Pokemon",
+            variable=self.shiny_only_pokemon_var,
+        )).grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="No TMs or move tutor",
+            variable=self.no_tm_move_tutor_var,
+        )).grid(row=2, column=1, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(filters_box, text="Whitelist mode", text_color="gray70").grid(
+            row=3, column=0, padx=10, pady=5, sticky="w"
+        )
+        self.whitelist_filter_mode_selector = register(ctk.CTkOptionMenu(
+            filters_box,
+            values=list(POKEMON_WHITELIST_OPTIONS),
+            variable=self.whitelist_filter_mode_var,
+        ))
+        self.whitelist_filter_mode_selector.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        ctk.CTkLabel(filters_box, text="Type mode", text_color="gray70").grid(
+            row=4, column=0, padx=10, pady=5, sticky="w"
+        )
+        self.type_filter_mode_selector = register(ctk.CTkOptionMenu(
+            filters_box,
+            values=list(POKEMON_FILTER_OPTIONS),
+            variable=self.type_filter_mode_var,
+        ))
+        self.type_filter_mode_selector.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        ctk.CTkLabel(filters_box, text="Type whitelist", text_color="gray70").grid(
+            row=5, column=0, padx=10, pady=5, sticky="w"
+        )
+        self.type_whitelist_entry = register(ctk.CTkEntry(
+            filters_box,
+            textvariable=self.type_whitelist_var,
+            placeholder_text="Dragon, Fire, Fairy",
+        ))
+        self.type_whitelist_entry.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+        ctk.CTkLabel(filters_box, text="Generation whitelist", text_color="gray70").grid(
+            row=6, column=0, padx=10, pady=(5, 10), sticky="w"
+        )
+        self.generation_whitelist_entry = register(ctk.CTkEntry(
+            filters_box,
+            textvariable=self.generation_whitelist_var,
+            placeholder_text="Kanto, Hoenn or Gen 1, Gen 3",
+        ))
+        self.generation_whitelist_entry.grid(row=6, column=1, padx=10, pady=(5, 10), sticky="ew")
+
+        ctk.CTkLabel(run_box, text="After reroll", text_color="gray70").grid(
+            row=4, column=0, padx=12, pady=6, sticky="w"
+        )
+        self.reroll_completion_selector = register(ctk.CTkOptionMenu(
+            run_box,
+            values=list(REROLL_COMPLETION_OPTIONS),
+            variable=self.reroll_completion_var,
+        ))
+        self.reroll_completion_selector.grid(row=4, column=1, padx=12, pady=6, sticky="ew")
+
+        ctk.CTkLabel(run_box, text="Item reroll target", text_color="gray70").grid(
+            row=5, column=0, padx=12, pady=(6, 12), sticky="w"
+        )
+        self.item_reroll_target_entry = register(ctk.CTkEntry(
+            run_box,
+            textvariable=self.item_reroll_target_var,
+            placeholder_text="Legend Lure",
+        ))
+        self.item_reroll_target_entry.grid(row=5, column=1, padx=12, pady=(6, 12), sticky="ew")
+
+        ctk.CTkLabel(run_box, text="Pokegold farm target", text_color="gray70").grid(
+            row=6, column=0, padx=12, pady=(6, 12), sticky="w"
+        )
+        self.pokegold_farm_target_entry = register(ctk.CTkEntry(
+            run_box,
+            textvariable=self.pokegold_farm_target_var,
+            placeholder_text="100000",
+        ))
+        self.pokegold_farm_target_entry.grid(row=6, column=1, padx=12, pady=(6, 12), sticky="ew")
+
+        ctk.CTkLabel(run_box, text="Evolution choices", text_color="gray70").grid(
+            row=7, column=0, padx=12, pady=(6, 12), sticky="w"
+        )
+        self.evolution_preference_entry = register(ctk.CTkEntry(
+            run_box,
+            textvariable=self.evolution_preference_var,
+            placeholder_text="Flareon, Dustox",
+        ))
+        self.evolution_preference_entry.grid(row=7, column=1, padx=12, pady=(6, 12), sticky="ew")
+
+        schedule_box = ctk.CTkFrame(content, corner_radius=10, fg_color="#111827")
+        schedule_box.grid(row=1, column=0, padx=4, pady=10, sticky="ew")
+        schedule_box.grid_columnconfigure(0, weight=1)
+        schedule_top = ctk.CTkFrame(schedule_box, fg_color="transparent")
+        schedule_top.grid(row=0, column=0, padx=12, pady=(12, 6), sticky="ew")
+        schedule_top.grid_columnconfigure(0, weight=1)
+        self.schedule_checkbox = register(ctk.CTkCheckBox(
+            schedule_top,
+            text="Task schedule",
+            variable=self.schedule_enabled_var,
+            command=self.update_schedule_summary,
+        ))
+        self.schedule_checkbox.grid(row=0, column=0, sticky="w")
+        self.schedule_button = register(ctk.CTkButton(
+            schedule_top,
+            text="Edit",
+            command=self.open_schedule_window,
+            width=76,
+            height=30,
+        ))
+        self.schedule_button.grid(row=0, column=1, padx=(10, 0), sticky="e")
+        self.schedule_summary_label = ctk.CTkLabel(
+            schedule_box,
+            text="",
+            text_color="gray78",
+            anchor="w",
+            justify="left",
+            wraplength=660,
+        )
+        self.schedule_summary_label.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="ew")
+        self.update_schedule_summary()
+
+        tools_box = ctk.CTkFrame(content, corner_radius=10, fg_color="#151f2c")
+        tools_box.grid(row=2, column=0, padx=4, pady=10, sticky="ew")
+        tools_box.grid_columnconfigure((0, 1, 2), weight=1)
+
+        def close_window():
+            self.save_settings()
+            self.settings_window = None
+            self.settings_controls = []
+            self.schedule_summary_label = None
+            window.destroy()
+
+        register(ctk.CTkButton(
+            tools_box,
+            text="Import config",
+            command=self.import_configuration,
+            height=36,
+        )).grid(row=0, column=0, padx=(12, 6), pady=12, sticky="ew")
+        register(ctk.CTkButton(
+            tools_box,
+            text="Export config",
+            command=self.export_configuration,
+            height=36,
+        )).grid(row=0, column=1, padx=6, pady=12, sticky="ew")
+        register(ctk.CTkButton(
+            tools_box,
+            text="Save and close",
+            command=close_window,
+            height=36,
+        )).grid(row=0, column=2, padx=(6, 12), pady=12, sticky="ew")
+        if self.bot_thread is not None and self.bot_thread.is_alive():
+            self.configure_settings_controls("disabled")
+        window.protocol("WM_DELETE_WINDOW", close_window)
+
     def schedule_step_label(self, step):
+        custom_name = " ".join(str(step.get("name") or "").strip().split())
         target = step.get("target", RUN_TARGET_DAILY)
         starter = " ".join(str(step.get("starter") or "").strip().split())
-        goal = step.get("goal", "Wins")
+        goal = self.normalize_schedule_goal(step.get("goal", SCHEDULE_COMPLETION_WINS))
         count = int(step.get("count", 1))
-        suffix = "win" if goal == "Wins" and count == 1 else goal.lower()
-        if goal == "Runs" and count == 1:
-            suffix = "run"
+        settings = step.get("settings") if isinstance(step.get("settings"), dict) else {}
+        mode = settings.get("mode")
+        if goal == SCHEDULE_COMPLETION_POKEGOLD:
+            suffix = "Pokegold"
+        else:
+            suffix = goal.lower()
+        if goal == SCHEDULE_COMPLETION_ATTEMPTS and count == 1:
+            suffix = "attempt"
+        if goal == SCHEDULE_COMPLETION_WINS and count == 1:
+            suffix = "completed run"
+        if goal == SCHEDULE_COMPLETION_CHALLENGE:
+            suffix = "challenge completion" if count == 1 else "challenge completions"
         starter_text = f" with {starter.title()}" if starter else ""
-        return f"{target}{starter_text} x{count} {suffix}"
+        settings_text = f" [{mode}]" if mode else ""
+        prefix = f"{custom_name}: " if custom_name else ""
+        if goal == SCHEDULE_COMPLETION_POKEGOLD:
+            return f"{prefix}{target}{starter_text} until {count:,} {suffix}{settings_text}"
+        return f"{prefix}{target}{starter_text} x{count} {suffix}{settings_text}"
 
     def update_schedule_summary(self):
-        if not hasattr(self, "schedule_summary_label"):
+        if not hasattr(self, "schedule_summary_label") or self.schedule_summary_label is None:
             return
         if not self.schedule_enabled_var.get():
             text = "Off"
@@ -1428,7 +2626,11 @@ class PokeLikeBotGUI(ctk.CTk):
             text = "  ->  ".join(labels)
             if extra > 0:
                 text = f"{text}  (+{extra})"
-        self.schedule_summary_label.configure(text=text)
+        try:
+            if self.schedule_summary_label.winfo_exists():
+                self.schedule_summary_label.configure(text=text)
+        except Exception:
+            pass
 
     def load_run_history(self):
         try:
@@ -1555,7 +2757,15 @@ class PokeLikeBotGUI(ctk.CTk):
             return
 
         for row, entry in enumerate(entries):
-            card = ctk.CTkFrame(frame, corner_radius=10, fg_color="#111827")
+            result_key = str(entry.get("result") or "").strip().lower()
+            won = result_key == "win"
+            card = ctk.CTkFrame(
+                frame,
+                corner_radius=10,
+                fg_color="#132117" if won else "#111827",
+                border_width=2 if won else 0,
+                border_color="#facc15" if won else "#111827",
+            )
             card.grid(row=row, column=0, padx=8, pady=6, sticky="ew")
             card.grid_columnconfigure(0, weight=1)
             result = entry.get("result", "").title() or "Run"
@@ -1564,11 +2774,16 @@ class PokeLikeBotGUI(ctk.CTk):
                 f"{self.format_duration_seconds(entry.get('duration', 0))}  -  "
                 f"{int(entry.get('money') or 0):,} Pokegold"
             )
+            title_kwargs = {
+                "text": title,
+                "anchor": "w",
+                "font": ctk.CTkFont(size=14, weight="bold"),
+            }
+            if won:
+                title_kwargs["text_color"] = "#fde68a"
             ctk.CTkLabel(
                 card,
-                text=title,
-                anchor="w",
-                font=ctk.CTkFont(size=14, weight="bold"),
+                **title_kwargs,
             ).grid(row=0, column=0, padx=12, pady=(10, 2), sticky="ew")
             meta = entry.get("target") or "Unknown target"
             progress = f"Leaders/E4: {int(entry.get('leaders') or 0)}  -  Legendaries: {int(entry.get('legendaries') or 0)}"
@@ -1675,8 +2890,8 @@ class PokeLikeBotGUI(ctk.CTk):
         window = ctk.CTkToplevel(self)
         self.prepare_popup_window(window)
         window.title("Task schedule")
-        window.geometry("980x560")
-        window.minsize(900, 460)
+        window.geometry("1180x620")
+        window.minsize(1040, 500)
         self.prepare_popup_window(window)
         window.grid_columnconfigure(0, weight=1)
         window.grid_rowconfigure(2, weight=1)
@@ -1693,23 +2908,25 @@ class PokeLikeBotGUI(ctk.CTk):
         ).grid(row=0, column=0, padx=12, pady=12, sticky="w")
         ctk.CTkLabel(
             header,
-            text="Each task advances when its win or run counter reaches the amount.",
+            text="Each task advances after attempts, completed runs, challenge completion, or earned Pokegold.",
             text_color="gray72",
             anchor="w",
         ).grid(row=0, column=1, padx=(0, 12), pady=12, sticky="ew")
 
         column_header = ctk.CTkFrame(window, fg_color="transparent")
         column_header.grid(row=1, column=0, padx=18, pady=(0, 4), sticky="ew")
-        column_header.grid_columnconfigure(1, weight=1)
+        column_header.grid_columnconfigure(2, weight=1)
         ctk.CTkLabel(column_header, text="#", width=36, text_color="gray70").grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(column_header, text="Run target", text_color="gray70").grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(column_header, text="Starter", width=130, text_color="gray70").grid(row=0, column=2, sticky="w")
-        ctk.CTkLabel(column_header, text="Advance after", width=130, text_color="gray70").grid(row=0, column=3, sticky="w")
-        ctk.CTkLabel(column_header, text="Amount", width=90, text_color="gray70").grid(row=0, column=4, sticky="w")
+        ctk.CTkLabel(column_header, text="Name", width=150, text_color="gray70").grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(column_header, text="Run target", text_color="gray70").grid(row=0, column=2, sticky="w")
+        ctk.CTkLabel(column_header, text="Starter", width=124, text_color="gray70").grid(row=0, column=3, sticky="w")
+        ctk.CTkLabel(column_header, text="Advance after", width=126, text_color="gray70").grid(row=0, column=4, sticky="w")
+        ctk.CTkLabel(column_header, text="Amount", width=90, text_color="gray70").grid(row=0, column=5, sticky="w")
+        ctk.CTkLabel(column_header, text="Task settings", width=190, text_color="gray70").grid(row=0, column=6, sticky="w")
 
         list_frame = ctk.CTkScrollableFrame(window, corner_radius=12)
         list_frame.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="nsew")
-        list_frame.grid_columnconfigure(1, weight=1)
+        list_frame.grid_columnconfigure(2, weight=1)
         row_vars = []
 
         def sync_rows_from_widgets():
@@ -1719,11 +2936,15 @@ class PokeLikeBotGUI(ctk.CTk):
                     count = int(row["count"].get().strip())
                 except Exception:
                     count = 1
+                goal = self.normalize_schedule_goal(row["goal"].get())
+                max_count = 999999999 if goal == SCHEDULE_COMPLETION_POKEGOLD else 9999
                 steps.append({
+                    "name": row["name"].get().strip(),
                     "target": row["target"].get(),
                     "starter": row["starter"].get().strip(),
-                    "goal": row["goal"].get(),
-                    "count": max(1, min(count, 9999)),
+                    "goal": goal,
+                    "count": max(1, min(count, max_count)),
+                    "settings": dict(row.get("settings") or {}),
                 })
             return self.parse_task_schedule(steps, DEFAULT_TASK_SCHEDULE)
 
@@ -1733,47 +2954,78 @@ class PokeLikeBotGUI(ctk.CTk):
             row_vars.clear()
             steps = rows if rows is not None else sync_rows_from_widgets()
             for index, step in enumerate(steps):
+                name_var = ctk.StringVar(value=step.get("name", ""))
                 target_var = ctk.StringVar(value=step["target"])
                 starter_var = ctk.StringVar(value=step.get("starter", ""))
                 goal_var = ctk.StringVar(value=step["goal"])
                 count_var = ctk.StringVar(value=str(step["count"]))
-                row_vars.append({"target": target_var, "starter": starter_var, "goal": goal_var, "count": count_var})
+                settings = dict(step.get("settings") or {})
+                row_vars.append({
+                    "name": name_var,
+                    "target": target_var,
+                    "starter": starter_var,
+                    "goal": goal_var,
+                    "count": count_var,
+                    "settings": settings,
+                })
 
                 ctk.CTkLabel(list_frame, text=str(index + 1), width=36).grid(
                     row=index, column=0, padx=(8, 6), pady=7, sticky="w"
                 )
+                ctk.CTkEntry(
+                    list_frame,
+                    textvariable=name_var,
+                    width=148,
+                    placeholder_text="Custom task",
+                ).grid(row=index, column=1, padx=6, pady=7, sticky="ew")
                 ctk.CTkOptionMenu(
                     list_frame,
                     values=list(RUN_TARGET_OPTIONS),
                     variable=target_var,
-                ).grid(row=index, column=1, padx=6, pady=7, sticky="ew")
+                ).grid(row=index, column=2, padx=6, pady=7, sticky="ew")
                 ctk.CTkEntry(
                     list_frame,
                     textvariable=starter_var,
-                    width=124,
+                    width=116,
                     placeholder_text="main starter",
-                ).grid(row=index, column=2, padx=6, pady=7, sticky="ew")
+                ).grid(row=index, column=3, padx=6, pady=7, sticky="ew")
                 ctk.CTkOptionMenu(
                     list_frame,
                     values=list(SCHEDULE_COMPLETION_OPTIONS),
                     variable=goal_var,
-                    width=120,
-                ).grid(row=index, column=3, padx=6, pady=7, sticky="ew")
+                    width=116,
+                ).grid(row=index, column=4, padx=6, pady=7, sticky="ew")
                 ctk.CTkEntry(list_frame, textvariable=count_var, width=76).grid(
-                    row=index, column=4, padx=6, pady=7, sticky="ew"
+                    row=index, column=5, padx=6, pady=7, sticky="ew"
                 )
+                settings_label = "Saved" if settings else "Default"
+                ctk.CTkLabel(list_frame, text=settings_label, width=58, text_color="gray74").grid(
+                    row=index, column=6, padx=(6, 2), pady=7, sticky="w"
+                )
+                ctk.CTkButton(
+                    list_frame,
+                    text="Capture",
+                    width=70,
+                    command=lambda i=index: capture_row_settings(i),
+                ).grid(row=index, column=7, padx=2, pady=7)
+                ctk.CTkButton(
+                    list_frame,
+                    text="Clear",
+                    width=54,
+                    command=lambda i=index: clear_row_settings(i),
+                ).grid(row=index, column=8, padx=(2, 8), pady=7)
                 ctk.CTkButton(
                     list_frame,
                     text="Up",
                     width=54,
                     command=lambda i=index: move_row(i, -1),
-                ).grid(row=index, column=5, padx=(8, 3), pady=7)
+                ).grid(row=index, column=9, padx=(8, 3), pady=7)
                 ctk.CTkButton(
                     list_frame,
                     text="Down",
                     width=62,
                     command=lambda i=index: move_row(i, 1),
-                ).grid(row=index, column=6, padx=3, pady=7)
+                ).grid(row=index, column=10, padx=3, pady=7)
                 ctk.CTkButton(
                     list_frame,
                     text="Remove",
@@ -1781,7 +3033,21 @@ class PokeLikeBotGUI(ctk.CTk):
                     fg_color="#7c2424",
                     hover_color="#963030",
                     command=lambda i=index: remove_row(i),
-                ).grid(row=index, column=7, padx=(3, 8), pady=7)
+                ).grid(row=index, column=11, padx=(3, 8), pady=7)
+
+        def capture_row_settings(index):
+            steps = sync_rows_from_widgets()
+            if 0 <= index < len(steps):
+                steps[index]["settings"] = self.current_task_settings_snapshot()
+                if not steps[index].get("name"):
+                    steps[index]["name"] = steps[index]["target"]
+                redraw(steps)
+
+        def clear_row_settings(index):
+            steps = sync_rows_from_widgets()
+            if 0 <= index < len(steps):
+                steps[index]["settings"] = {}
+                redraw(steps)
 
         def move_row(index, direction):
             steps = sync_rows_from_widgets()
@@ -1800,7 +3066,14 @@ class PokeLikeBotGUI(ctk.CTk):
 
         def add_row():
             steps = sync_rows_from_widgets()
-            steps.append({"target": "Story Classic - Kanto", "starter": "", "goal": "Runs", "count": 1})
+            steps.append({
+                "name": "New task",
+                "target": "Story Classic - Kanto",
+                "starter": "",
+                "goal": SCHEDULE_COMPLETION_ATTEMPTS,
+                "count": 1,
+                "settings": {},
+            })
             redraw(steps)
 
         def reset_rows():
@@ -1858,14 +3131,26 @@ class PokeLikeBotGUI(ctk.CTk):
 
         ctk.CTkLabel(
             window,
-            text="One item per line. Higher priority lines are picked first; never-pick items are skipped. "
-                 "Select a line (or click into it) and use ↓/↑ to move it between the two lists.",
+            text="Higher priority items are picked first. Expand a type, search for an item, then select it to move it up, down, or between lists.",
             text_color="gray70",
         ).grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 10), sticky="w")
 
-        ctk.CTkLabel(window, text="Starting / passive item priority").grid(
-            row=1, column=0, padx=(16, 8), pady=(0, 6), sticky="w"
-        )
+        starting_header = ctk.CTkFrame(window, fg_color="transparent")
+        starting_header.grid(row=1, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
+        starting_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(starting_header, text="Starting / passive item priority").grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            starting_header,
+            text="Up",
+            width=52,
+            command=lambda: starting_text.move_selected(-1),
+        ).grid(row=0, column=1, padx=(8, 0), sticky="e")
+        ctk.CTkButton(
+            starting_header,
+            text="Down",
+            width=64,
+            command=lambda: starting_text.move_selected(1),
+        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
         starter_key = self.current_starter_key()
         starter_label = self.current_starter_label()
         regular_header = ctk.CTkFrame(window, fg_color="transparent")
@@ -1877,25 +3162,51 @@ class PokeLikeBotGUI(ctk.CTk):
         ).grid(row=0, column=0, sticky="w")
         ctk.CTkButton(
             regular_header,
+            text="Up",
+            width=52,
+            command=lambda: regular_text.move_selected(-1),
+        ).grid(row=0, column=1, padx=(8, 0), sticky="e")
+        ctk.CTkButton(
+            regular_header,
+            text="Down",
+            width=64,
+            command=lambda: regular_text.move_selected(1),
+        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
+        ctk.CTkButton(
+            regular_header,
             text="Load default",
             width=96,
             command=lambda: load_regular_default(),
-        ).grid(row=0, column=1, padx=(8, 0), sticky="e")
+        ).grid(row=0, column=3, padx=(6, 0), sticky="e")
         ctk.CTkButton(
             regular_header,
             text="Clear starter",
             width=104,
             command=lambda: clear_starter_regular_profile(),
-        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
+        ).grid(row=0, column=4, padx=(6, 0), sticky="e")
 
         class PriorityBlockList:
             def __init__(block_self, parent, row, column, values, padx, rowspan=1, group_items=False):
                 block_self.group_items = group_items
                 block_self.items = list(values)
-                block_self.selected_index = 0 if block_self.items else None
-                block_self.collapsed_groups = set()
-                block_self.frame = ctk.CTkScrollableFrame(parent, corner_radius=10)
-                block_self.frame.grid(row=row, column=column, rowspan=rowspan, padx=padx, pady=(0, 12), sticky="nsew")
+                block_self.selected_index = None
+                block_self.search_var = ctk.StringVar(value="")
+                block_self.collapsed_groups = set(POKEMON_TYPE_GROUPS) | {"General"}
+                block_self.row_widgets = {}
+                block_self.search_after_id = None
+                block_self.outer = ctk.CTkFrame(parent, fg_color="transparent")
+                block_self.outer.grid(row=row, column=column, rowspan=rowspan, padx=padx, pady=(0, 12), sticky="nsew")
+                block_self.outer.grid_columnconfigure(0, weight=1)
+                block_self.outer.grid_rowconfigure(1, weight=1)
+                block_self.search_entry = ctk.CTkEntry(
+                    block_self.outer,
+                    textvariable=block_self.search_var,
+                    placeholder_text="Search items",
+                )
+                block_self.search_entry.grid(row=0, column=0, padx=0, pady=(0, 8), sticky="ew")
+                block_self.search_entry.bind("<KeyRelease>", block_self.schedule_search_render)
+                block_self.frame = ctk.CTkScrollableFrame(block_self.outer, corner_radius=10)
+                block_self.frame.grid(row=1, column=0, sticky="nsew")
                 block_self.frame.grid_columnconfigure(0, weight=1)
                 block_self.render()
 
@@ -1905,13 +3216,30 @@ class PokeLikeBotGUI(ctk.CTk):
             def item_group(block_self, value):
                 return self.passive_item_type_group(value)
 
+            def group_order(block_self, group):
+                if group == "General":
+                    return len(POKEMON_TYPE_GROUPS)
+                try:
+                    return POKEMON_TYPE_GROUPS.index(group)
+                except ValueError:
+                    return len(POKEMON_TYPE_GROUPS) + 1
+
             def grouped_items(block_self):
                 if not block_self.group_items:
                     return [("", list(block_self.items))]
-                groups = {}
+                groups = {group: [] for group in POKEMON_TYPE_GROUPS}
+                groups["General"] = []
+                query = block_self.search_var.get().strip().lower()
                 for value in block_self.items:
-                    groups.setdefault(block_self.item_group(value), []).append(value)
-                names = sorted(groups, key=lambda name: (name != "General", name))
+                    if query:
+                        label = self.item_label_with_detail(value).lower()
+                        if query not in label and query not in self.normalize_item_name(value):
+                            continue
+                    group = block_self.item_group(value)
+                    if group not in groups:
+                        group = "General"
+                    groups[group].append(value)
+                names = list(POKEMON_TYPE_GROUPS) + ["General"]
                 return [(name, groups[name]) for name in names]
 
             def split_label(block_self, value):
@@ -1929,8 +3257,8 @@ class PokeLikeBotGUI(ctk.CTk):
                 for candidate in priority_block_lists:
                     if candidate is not block_self:
                         candidate.selected_index = None
-                        candidate.render()
-                block_self.render()
+                        candidate.update_selection_styles()
+                block_self.update_selection_styles()
 
             def toggle_group(block_self, group):
                 if group in block_self.collapsed_groups:
@@ -1939,9 +3267,45 @@ class PokeLikeBotGUI(ctk.CTk):
                     block_self.collapsed_groups.add(group)
                 block_self.render()
 
+            def schedule_search_render(block_self, _event=None):
+                if block_self.search_after_id is not None:
+                    try:
+                        window.after_cancel(block_self.search_after_id)
+                    except Exception:
+                        pass
+                block_self.search_after_id = window.after(120, block_self.render)
+
+            def type_display(block_self, group):
+                if not group:
+                    return ""
+                if group.endswith(" type"):
+                    return group[:-5]
+                return group
+
+            def type_color(block_self, group):
+                return POKEMON_TYPE_COLORS.get(group, POKEMON_TYPE_COLORS["General"])
+
+            def update_selection_styles(block_self):
+                for value, block in list(block_self.row_widgets.items()):
+                    selected = (
+                        block_self.selected_index is not None
+                        and block_self.selected_index < len(block_self.items)
+                        and block_self.items[block_self.selected_index] == value
+                    )
+                    try:
+                        block.configure(
+                            fg_color="#1f3a5f" if selected else "#111827",
+                            border_color="#38bdf8" if selected else "#263244",
+                        )
+                    except Exception:
+                        pass
+
             def render(block_self):
+                block_self.search_after_id = None
+                query = block_self.search_var.get().strip()
                 for child in block_self.frame.winfo_children():
                     child.destroy()
+                block_self.row_widgets = {}
                 if not block_self.items:
                     ctk.CTkLabel(block_self.frame, text="No items", text_color="gray55", anchor="w").grid(
                         row=0, column=0, padx=10, pady=10, sticky="ew"
@@ -1949,15 +3313,21 @@ class PokeLikeBotGUI(ctk.CTk):
                     return
                 row = 0
                 for group, values in block_self.grouped_items():
+                    if group and not values:
+                        continue
                     if group:
-                        collapsed = group in block_self.collapsed_groups
+                        collapsed = not query and group in block_self.collapsed_groups
+                        type_color = block_self.type_color(group)
                         ctk.CTkButton(
                             block_self.frame,
-                            text=f"{'+' if collapsed else '-'} {group}",
+                            text=f"{'+' if collapsed else '-'} {block_self.type_display(group)} ({len(values)})",
                             height=28,
                             anchor="w",
-                            fg_color="#263244",
-                            hover_color="#334155",
+                            fg_color="#172033",
+                            hover_color="#223149",
+                            text_color=type_color,
+                            border_width=1,
+                            border_color=type_color,
                             command=lambda g=group: block_self.toggle_group(g),
                         ).grid(row=row, column=0, padx=6, pady=(6, 2), sticky="ew")
                         row += 1
@@ -1972,10 +3342,10 @@ class PokeLikeBotGUI(ctk.CTk):
                         block = ctk.CTkFrame(
                             block_self.frame,
                             corner_radius=8,
-                        fg_color="#1f3a5f" if selected else "#111827",
-                        border_width=1,
-                        border_color="#38bdf8" if selected else "#263244",
-                    )
+                            fg_color="#1f3a5f" if selected else "#111827",
+                            border_width=1,
+                            border_color="#38bdf8" if selected else "#263244",
+                        )
                         block.grid(row=row, column=0, padx=6, pady=(3, 2), sticky="ew")
                         block.grid_columnconfigure(0, weight=1)
                         name, detail = block_self.split_label(value)
@@ -2005,7 +3375,12 @@ class PokeLikeBotGUI(ctk.CTk):
                             name_label.grid_configure(pady=(7, 8))
                         for widget in widgets:
                             widget.bind("<Button-1>", lambda _event, item=value: block_self.select(item))
+                        block_self.row_widgets[value] = block
                         row += 1
+                if row == 0:
+                    ctk.CTkLabel(block_self.frame, text="No matches", text_color="gray55", anchor="w").grid(
+                        row=0, column=0, padx=10, pady=10, sticky="ew"
+                    )
 
             def get(block_self, start, end=None):
                 if str(start).startswith("1.0") and str(end).startswith("end"):
@@ -2022,7 +3397,23 @@ class PokeLikeBotGUI(ctk.CTk):
 
             def insert(block_self, index, text):
                 block_self.items = self.parse_priority_text(text, ())
-                block_self.selected_index = 0 if block_self.items else None
+                block_self.selected_index = None
+                block_self.render()
+
+            def selected_items(block_self):
+                if block_self.selected_index is None or block_self.selected_index >= len(block_self.items):
+                    return []
+                return [block_self.items[block_self.selected_index]]
+
+            def move_selected(block_self, direction):
+                if block_self.selected_index is None:
+                    return
+                index = block_self.selected_index
+                new_index = index + direction
+                if new_index < 0 or new_index >= len(block_self.items):
+                    return
+                block_self.items[index], block_self.items[new_index] = block_self.items[new_index], block_self.items[index]
+                block_self.selected_index = new_index
                 block_self.render()
 
             def tag_ranges(block_self, _tag):
@@ -2067,7 +3458,7 @@ class PokeLikeBotGUI(ctk.CTk):
             rowspan=3,
             values=self.active_regular_item_priority(),
             padx=(8, 16),
-            group_items=False,
+            group_items=True,
         )
         priority_block_lists.append(regular_text)
 
@@ -2075,13 +3466,22 @@ class PokeLikeBotGUI(ctk.CTk):
         ignore_header.grid(row=3, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
         ctk.CTkLabel(ignore_header, text="Starting / passive never-pick list").pack(side="left")
         ctk.CTkButton(
-            ignore_header, text="↑ To priority", width=96,
+            ignore_header, text="To priority", width=96,
             command=lambda: move_lines(ignore_text, starting_text),
         ).pack(side="right", padx=(6, 0))
         ctk.CTkButton(
-            ignore_header, text="↓ To never-pick", width=118,
+            ignore_header, text="To never-pick", width=118,
             command=lambda: move_lines(starting_text, ignore_text),
         ).pack(side="right")
+
+        ctk.CTkButton(
+            ignore_header, text="Down", width=64,
+            command=lambda: ignore_text.move_selected(1),
+        ).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(
+            ignore_header, text="Up", width=52,
+            command=lambda: ignore_text.move_selected(-1),
+        ).pack(side="right", padx=(6, 0))
 
         ignore_text = PriorityBlockList(
             window,
@@ -2095,79 +3495,17 @@ class PokeLikeBotGUI(ctk.CTk):
 
         styled_boxes = [starting_text, regular_text, ignore_text]
 
-        def _raw_textbox(box):
-            return getattr(box, "_textbox", box)
-
-        def style_priority_box(box):
-            tb = _raw_textbox(box)
-            try:
-                tb.configure(spacing1=3, spacing3=5)
-                tb.tag_configure("item_name", foreground="#7dd3fc")
-                tb.tag_configure("item_detail", foreground="#c4b5fd")
-                tb.tag_configure("selected_item_line", background="#1f3a5f")
-            except Exception:
-                return
-            for tag in ("item_name", "item_detail"):
-                tb.tag_remove(tag, "1.0", "end")
-            try:
-                line_count = int(float(tb.index("end-1c")))
-            except Exception:
-                line_count = 0
-            for line in range(1, line_count + 1):
-                text = tb.get(f"{line}.0", f"{line}.end")
-                if not text.strip():
-                    continue
-                detail_start = text.find(" [")
-                if detail_start >= 0 and text.rstrip().endswith("]"):
-                    tb.tag_add("item_name", f"{line}.0", f"{line}.{detail_start}")
-                    tb.tag_add("item_detail", f"{line}.{detail_start}", f"{line}.end")
-                else:
-                    tb.tag_add("item_name", f"{line}.0", f"{line}.end")
-
-        def highlight_priority_line(box):
-            for other in styled_boxes:
-                try:
-                    _raw_textbox(other).tag_remove("selected_item_line", "1.0", "end")
-                except Exception:
-                    pass
-            tb = _raw_textbox(box)
-            try:
-                line = tb.index("insert").split(".", 1)[0]
-                tb.tag_add("selected_item_line", f"{line}.0", f"{line}.end+1c")
-            except Exception:
-                pass
-
         def refresh_priority_box(box):
-            style_priority_box(box)
-            highlight_priority_line(box)
+            box.render()
 
         def bind_priority_box(box):
-            tb = _raw_textbox(box)
-            def refresh_later(_event=None):
-                window.after(1, lambda: refresh_priority_box(box))
-            for event in ("<ButtonRelease-1>", "<KeyRelease>", "<FocusIn>", "<<Selection>>"):
-                try:
-                    tb.bind(event, refresh_later, add="+")
-                except Exception:
-                    pass
-            refresh_priority_box(box)
+            box.update_selection_styles()
 
         for box in styled_boxes:
             bind_priority_box(box)
 
         def _selected_lines(box):
-            tb = getattr(box, "_textbox", box)
-            try:
-                r = tb.tag_ranges("sel")
-            except Exception:
-                r = None
-            if r:
-                start = tb.index("%s linestart" % r[0])
-                end = tb.index("%s lineend" % r[1])
-            else:  # no selection -> the line the cursor is on
-                start = tb.index("insert linestart")
-                end = tb.index("insert lineend")
-            return [ln.strip() for ln in tb.get(start, end).splitlines() if ln.strip()]
+            return [ln.strip() for ln in box.selected_items() if ln.strip()]
 
         def move_lines(src, dst):
             picks = _selected_lines(src)
@@ -2369,6 +3707,11 @@ class PokeLikeBotGUI(ctk.CTk):
             return None
         return self.task_schedule[self.schedule_index].get("target")
 
+    def active_schedule_step(self):
+        if not self.schedule_active or self.schedule_index >= len(self.task_schedule):
+            return None
+        return self.task_schedule[self.schedule_index]
+
     def active_schedule_starter(self):
         if not self.schedule_active or self.schedule_index >= len(self.task_schedule):
             return None
@@ -2377,7 +3720,103 @@ class PokeLikeBotGUI(ctk.CTk):
             return starter.lower()
         return (self.schedule_default_starter_name or STARTER_NAME).strip().lower()
 
+    def apply_task_settings_snapshot(self, settings, update_runtime=True):
+        settings = self.parse_task_settings_snapshot(settings)
+        if not settings:
+            return False
+        changed = False
+
+        def set_var(var, value):
+            nonlocal changed
+            if value is None:
+                return
+            text = str(value)
+            if var.get() != text:
+                var.set(text)
+                changed = True
+
+        def set_bool(var, value):
+            nonlocal changed
+            if not isinstance(value, bool):
+                return
+            if bool(var.get()) != value:
+                var.set(value)
+                changed = True
+
+        set_var(self.mode_var, settings.get("mode"))
+        set_bool(self.manual_start_var, settings.get("manual_start"))
+        set_bool(self.headless_var, settings.get("headless"))
+        set_var(self.run_target_var, settings.get("run_target"))
+        set_var(self.starter_var, settings.get("starter"))
+        set_var(self.target_pokemon_var, settings.get("shiny_whitelist"))
+        set_var(self.shop_ignore_pokemon_var, settings.get("shop_ignore_pokemon"))
+        set_var(self.evolution_preference_var, settings.get("evolution_preference"))
+        set_var(self.dex_target_var, settings.get("dex_target_mode"))
+        set_var(self.full_run_dex_priority_var, settings.get("full_run_dex_priority_mode"))
+        set_var(self.reroll_completion_var, settings.get("reroll_completion_mode"))
+        set_var(self.item_reroll_target_var, settings.get("item_reroll_target"))
+        set_var(self.pokegold_farm_target_var, settings.get("pokegold_farm_target"))
+        set_bool(self.ignore_pokemon_var, settings.get("ignore_pokemon"))
+        set_bool(self.ignore_pokecenter_var, settings.get("ignore_pokecenter"))
+        set_bool(self.shiny_only_pokemon_var, settings.get("shiny_only_pokemon"))
+        set_bool(self.no_tm_move_tutor_var, settings.get("no_tm_move_tutor"))
+        set_var(self.type_whitelist_var, settings.get("pokemon_type_whitelist"))
+        set_var(self.type_filter_mode_var, settings.get("pokemon_type_filter_mode"))
+        set_var(self.whitelist_filter_mode_var, settings.get("pokemon_whitelist_mode"))
+        set_var(self.generation_whitelist_var, settings.get("pokemon_generation_whitelist"))
+
+        for attr, key in [
+            ("starting_item_priority", "starting_item_priority"),
+            ("regular_item_priority", "regular_item_priority"),
+            ("starting_item_ignore", "starting_item_ignore"),
+        ]:
+            if key in settings:
+                setattr(self, attr, list(settings.get(key) or []))
+                changed = True
+        if "regular_item_priority_by_starter" in settings:
+            self.regular_item_priority_by_starter = dict(settings.get("regular_item_priority_by_starter") or {})
+            changed = True
+
+        if update_runtime:
+            mode = self.mode_var.get()
+            if mode:
+                self.current_mode = mode
+            self.current_run_target = self.run_target_var.get()
+            self.current_run_target_info = self.parse_run_target(self.current_run_target)
+            self.current_tower = self.current_run_target_info.get("name", self.current_run_target)
+            self.current_starter_name = (self.starter_var.get().strip() or STARTER_NAME).lower()
+            self.current_manual_target_pokemon_list = self.parse_pokemon_target_list(self.target_pokemon_var.get())
+            self.current_evolution_preference_list = self.parse_pokemon_target_list(self.evolution_preference_var.get())
+            self.current_target_pokemon_list = self.build_current_pokemon_targets(self.current_manual_target_pokemon_list, [])
+            self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+            self.current_item_reroll_targets = self.parse_item_target_list()
+            self.current_item_reroll_target = ", ".join(self.current_item_reroll_targets)
+            self.current_pokegold_farm_target = self.parse_pokegold_farm_target()
+            self.current_ignore_pokemon = bool(self.ignore_pokemon_var.get())
+            self.current_ignore_pokecenter = bool(self.ignore_pokecenter_var.get())
+            self.current_shiny_only_pokemon = bool(self.shiny_only_pokemon_var.get())
+            self.current_no_tm_move_tutor = bool(self.no_tm_move_tutor_var.get())
+            self.current_type_whitelist = self.parse_type_whitelist(self.type_whitelist_var.get())
+            self.current_type_filter_mode = (
+                self.type_filter_mode_var.get()
+                if self.type_filter_mode_var.get() in POKEMON_FILTER_OPTIONS
+                else POKEMON_FILTER_PRIORITIZE
+            )
+            self.current_whitelist_filter_mode = (
+                self.whitelist_filter_mode_var.get()
+                if self.whitelist_filter_mode_var.get() in POKEMON_WHITELIST_OPTIONS
+                else POKEMON_WHITELIST_ONLY
+            )
+            self.current_generation_whitelist = self.parse_generation_whitelist(self.generation_whitelist_var.get())
+            self.current_type_filter_names = self.names_for_type_filters(self.current_type_whitelist)
+            self.current_generation_filter_names = self.names_for_generation_filters(self.current_generation_whitelist)
+        return changed
+
     def apply_active_schedule_target(self):
+        step = self.active_schedule_step()
+        if step and self.apply_task_settings_snapshot(step.get("settings"), update_runtime=True):
+            label = step.get("name") or step.get("target") or "task"
+            self.log(f"Schedule applied saved settings for: {label}.")
         target = self.active_schedule_target()
         starter = self.active_schedule_starter()
         changed = False
@@ -2423,15 +3862,23 @@ class PokeLikeBotGUI(ctk.CTk):
         self.schedule_result_signature = signature
 
         step = self.task_schedule[self.schedule_index]
-        goal = step.get("goal", "Wins")
-        should_count = goal == "Runs" or (goal == "Wins" and won)
-        if should_count:
-            self.schedule_progress[self.schedule_index] += 1
+        goal = self.normalize_schedule_goal(step.get("goal", SCHEDULE_COMPLETION_WINS))
+        if goal == SCHEDULE_COMPLETION_POKEGOLD:
+            self.schedule_progress[self.schedule_index] += max(0, int(self.run_money_earned or 0))
+        else:
+            should_count = (
+                goal == SCHEDULE_COMPLETION_ATTEMPTS
+                or (goal in {SCHEDULE_COMPLETION_WINS, SCHEDULE_COMPLETION_CHALLENGE} and won)
+            )
+            if should_count:
+                self.schedule_progress[self.schedule_index] += 1
         progress = self.schedule_progress[self.schedule_index]
         needed = int(step.get("count", 1))
+        progress_text = f"{progress:,}/{needed:,}" if goal == SCHEDULE_COMPLETION_POKEGOLD else f"{progress}/{needed}"
+        label = step.get("name") or step.get("target")
         self.log(
             f"Schedule task {self.schedule_index + 1}/{len(self.task_schedule)} "
-            f"{step.get('target')}: {progress}/{needed} {goal.lower()}."
+            f"{label}: {progress_text} {goal.lower()}."
         )
 
         if progress < needed:
@@ -2494,6 +3941,13 @@ class PokeLikeBotGUI(ctk.CTk):
             count = 1
         return max(1, min(count, MAX_BROWSER_COUNT))
 
+    def parse_pokegold_farm_target(self, value=None):
+        raw = self.pokegold_farm_target_var.get() if value is None else value
+        digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+        if not digits:
+            return 100000
+        return max(1, min(int(digits), 999999999))
+
     def parse_chrome_restart_minutes(self):
         raw = str(self.chrome_restart_minutes_var.get()).strip().lower()
         if raw in ["", "0", "off", "none", "disabled"]:
@@ -2542,13 +3996,2144 @@ class PokeLikeBotGUI(ctk.CTk):
             for future in as_completed(futures):
                 future.result()
 
-    def start_bot(self):
-        selected_mode = self.mode_var.get()
-        target_pokemon_list = [
+    def prepare_legendary_shop_seed_profile(self):
+        base_driver = None
+        try:
+            drivers = self.launch_missing_drivers(1)
+            base_driver = drivers[0]
+            self.thread_local.use_local = True
+            self.driver = base_driver
+            self.wait = WebDriverWait(base_driver, 20)
+            self.prepare_page()
+            self.ensure_home_screen_for_shop()
+            self.log("Legendary shop reroll: loaded the main profile at the home/shop screen.")
+        finally:
+            self.clear_thread_driver()
+            if base_driver:
+                try:
+                    base_driver.quit()
+                except Exception:
+                    pass
+                self.remove_driver_reference(base_driver)
+
+        seed_path = self.legendary_shop_seed_profile_path()
+        self.safe_replace_profile_copy(SELENIUM_PROFILE_PATH, seed_path)
+        self.log(f"Legendary shop reroll: saved clean pre-buy profile seed at {seed_path}.")
+        return seed_path
+
+    def install_legendary_shop_cloud_guard(self, driver):
+        script = r"""
+(() => {
+    if (window.__pokelikeBotCloudGuardInstalled) return;
+    window.__pokelikeBotCloudGuardInstalled = true;
+    window.__pokelikeBotAllowCloudUpload = false;
+    const blockedTerms = [
+        'cloud', 'sync', 'save', 'upload', 'account-force-upload',
+        'force-upload', 'save-data', 'savedata'
+    ];
+    const methodWrites = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+    const urlText = (input) => {
+        try {
+            if (typeof input === 'string') return input;
+            if (input && input.url) return input.url;
+        } catch (e) {}
+        return '';
+    };
+    const shouldBlock = (method, url, body) => {
+        if (window.__pokelikeBotAllowCloudUpload) return false;
+        const verb = String(method || 'GET').toUpperCase();
+        const haystack = `${url || ''} ${body || ''}`.toLowerCase();
+        return methodWrites.has(verb) && blockedTerms.some(term => haystack.includes(term));
+    };
+    const fakeResponse = () => new Response(JSON.stringify({ ok: true, blockedByPokeLikeBot: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+    });
+    const originalFetch = window.fetch;
+    if (typeof originalFetch === 'function') {
+        window.fetch = function(input, init) {
+            const method = (init && init.method) || (input && input.method) || 'GET';
+            const body = init && init.body;
+            const url = urlText(input);
+            if (shouldBlock(method, url, body)) {
+                console.warn('[PokeLike Bot] blocked automatic cloud save request', method, url);
+                return Promise.resolve(fakeResponse());
+            }
+            return originalFetch.apply(this, arguments);
+        };
+    }
+    const originalBeacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+    if (originalBeacon) {
+        navigator.sendBeacon = function(url, data) {
+            if (shouldBlock('POST', url, data)) {
+                console.warn('[PokeLike Bot] blocked automatic cloud save beacon', url);
+                return true;
+            }
+            return originalBeacon(url, data);
+        };
+    }
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this.__pokelikeBotMethod = method || 'GET';
+        this.__pokelikeBotUrl = url || '';
+        return originalOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function(body) {
+        if (shouldBlock(this.__pokelikeBotMethod, this.__pokelikeBotUrl, body)) {
+            console.warn('[PokeLike Bot] blocked automatic cloud save XHR', this.__pokelikeBotMethod, this.__pokelikeBotUrl);
+            try {
+                Object.defineProperty(this, 'readyState', { value: 4, configurable: true });
+                Object.defineProperty(this, 'status', { value: 200, configurable: true });
+                Object.defineProperty(this, 'responseText', { value: '{"ok":true,"blockedByPokeLikeBot":true}', configurable: true });
+                if (typeof this.onreadystatechange === 'function') this.onreadystatechange();
+                if (typeof this.onload === 'function') this.onload();
+            } catch (e) {}
+            return;
+        }
+        return originalSend.apply(this, arguments);
+    };
+})();
+"""
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+            driver.execute_script(script)
+            self.log("Legendary shop reroll: installed automatic cloud-upload guard for attempt browser.")
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: could not install cloud-upload guard: {exc}")
+
+    def enable_legendary_shop_network_guard(self, driver):
+        try:
+            driver.execute_cdp_cmd("Network.enable", {})
+            driver.execute_cdp_cmd("Network.setBlockedURLs", {
+                "urls": [
+                    "*cloud*",
+                    "*sync*",
+                    "*upload*",
+                    "*save-data*",
+                    "*savedata*",
+                    "*force-upload*",
+                ]
+            })
+            self.log("Legendary shop reroll: enabled network block for cloud/save upload URLs.")
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: could not enable network cloud guard: {exc}")
+
+    def disable_legendary_shop_network_guard(self, driver=None):
+        try:
+            (driver or self.driver).execute_cdp_cmd("Network.setBlockedURLs", {"urls": []})
+        except Exception:
+            pass
+
+    def reset_legendary_shop_attempt_profile(self, seed_path, slot=None):
+        attempt_path = self.legendary_shop_attempt_profile_path(slot=slot)
+        self.safe_replace_profile_copy(seed_path, attempt_path)
+        return attempt_path
+
+    def preserve_legendary_shop_hit_profile(self, attempt_path, result):
+        name = self.normalize_pokemon_name((result or {}).get("name") or (result or {}).get("key") or "legendary")
+        shiny_label = "shiny" if (result or {}).get("shiny") else "normal"
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        target_path = f"{SELENIUM_PROFILE_PATH}-shop-hit-{timestamp}-{shiny_label}-{name or 'pokemon'}"
+        try:
+            self.safe_replace_profile_copy(attempt_path, target_path)
+            self.log(f"Legendary shop reroll: preserved hit Chrome profile at {target_path}.")
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: could not preserve hit Chrome profile: {exc}")
+        return target_path
+
+    def prepare_shop_attempt_browser(self, seed_path, slot):
+        attempt_path = self.reset_legendary_shop_attempt_profile(seed_path, slot=slot)
+        worker_id = 100 + int(slot)
+        driver = self.launch_driver(
+            worker_id=worker_id,
+            make_active=False,
+            profile_path_override=attempt_path,
+            allow_reconnect=False,
+        )
+        self.install_legendary_shop_cloud_guard(driver)
+        self.thread_local.use_local = True
+        self.thread_local.worker_id = worker_id
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 20)
+        try:
+            self.prepare_page()
+            self.ensure_home_screen_for_shop()
+            self.enable_legendary_shop_network_guard(driver)
+            if self.stop_event.is_set():
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+                self.remove_driver_reference(driver)
+                return None
+            return {
+                "driver": driver,
+                "attempt_path": attempt_path,
+                "slot": slot,
+                "worker_id": worker_id,
+            }
+        finally:
+            self.clear_thread_driver()
+
+    def ensure_home_screen_for_shop(self):
+        if not self.driver.current_url.startswith(POKELIKE_URL):
+            self.prepare_page()
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.click();
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
+            const activeId = document.querySelector('.screen.active')?.id || '';
+            if (activeId && !document.body.classList.contains('run-menu-in-run')) {
+                return {ok: true, screen: activeId, alreadyHome: true};
+            }
+            const home = [...document.querySelectorAll('button, [role="button"]')]
+                .filter(visible)
+                .find(btn => {
+                    const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                    const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                    const menu = (btn.dataset?.menu || '').toLowerCase();
+                    return menu === 'home' || label === 'home' || text === 'home';
+                });
+            if (!home && typeof window.goHomeFromMenu === 'function') {
+                window.goHomeFromMenu();
+                return {ok: true, method: 'function', screen: activeId};
+            }
+            if (!home) return {ok: false, screen: activeId};
+            click(home);
+            return {ok: true, method: 'button', screen: activeId};
+            """
+        )
+        if not result.get("ok"):
+            raise RuntimeError(f"Could not reach home screen for shop; current screen={result.get('screen') or 'unknown'}")
+        time.sleep(0.8)
+        return True
+
+    def click_legendary_shop_buy(self):
+        config = self.current_shop_egg_config()
+        result = self.driver.execute_script(
+            """
+            const eggType = arguments[0];
+            const expectedPrice = arguments[1];
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.click();
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
+            const normalizeMoney = (text) => parseInt(String(text || '').replace(/[^0-9]/g, ''), 10) || 0;
+            const openShop = () => {
+                if (typeof window.openShopModal === 'function') {
+                    window.openShopModal();
+                    return true;
+                }
+                const btn = [...document.querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .find(el => {
+                        const text = (el.innerText || el.textContent || '').toLowerCase();
+                        const label = (el.getAttribute('aria-label') || el.dataset?.tip || '').toLowerCase();
+                        const html = (el.outerHTML || '').toLowerCase();
+                        return label.includes('mart') || text.includes('mart') || html.includes('pokemart');
+                    });
+                if (!btn) return false;
+                click(btn);
+                return true;
+            };
+            openShop();
+            const started = Date.now();
+            while (Date.now() - started < 2500) {
+                const exactBuy = document.querySelector(`button.mart-buy[data-egg="${eggType}"], .mart-buy[data-egg="${eggType}"]`);
+                const buy = exactBuy && visible(exactBuy) ? exactBuy : [...document.querySelectorAll('button.mart-buy, .mart-buy, button')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').toLowerCase();
+                        const egg = (btn.dataset?.egg || '').toLowerCase();
+                        return egg === eggType
+                            || (text.includes('buy') && text.includes(expectedPrice.toLocaleString('de-DE')))
+                            || (text.includes('buy') && text.includes(String(expectedPrice)) && text.includes(eggType));
+                    });
+                if (buy) {
+                    const text = buy.innerText || buy.textContent || '';
+                    const price = normalizeMoney(text);
+                    if (price && price !== expectedPrice) return {clicked: false, reason: `unexpected price ${price}`, text};
+                    if (buy.disabled || buy.getAttribute('aria-disabled') === 'true') {
+                        return {clicked: false, reason: `${eggType} buy button disabled`, text};
+                    }
+                    click(buy);
+                    return {clicked: true, text, price};
+                }
+            }
+            return {clicked: false, reason: `${eggType} buy button not found`};
+            """,
+            config["egg_type"],
+            config["expected_price"],
+        )
+        if not result.get("clicked"):
+            raise RuntimeError(f"Could not buy {config['label']}: {result.get('reason') or 'unknown'}")
+        self.log(f"{config['mode_label']}: clicked buy ({result.get('text') or config['label']}).")
+        time.sleep(0.12)
+        return True
+
+    def legendary_shop_party_summary(self):
+        result = self.driver.execute_script(
+            """
+            const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const roots = ['#team-bar', '#catch-team-bar', '#item-team-bar', '#passive-team-bar', '#gameover-team', '#win-team'];
+            const cards = roots.flatMap(selector => [...document.querySelectorAll(`${selector} .team-slot, ${selector} .poke-card`)])
+                .filter(visible);
+            const slots = cards.map((card, index) => {
+                const img = card.querySelector('img');
+                const src = img?.src || '';
+                const name = (
+                    card.querySelector('.team-slot-name, .poke-name, .dex-name')?.innerText
+                    || img?.getAttribute('alt')
+                    || card.innerText
+                    || ''
+                ).trim().replace(/\\s+/g, ' ').slice(0, 80);
+                const text = (card.innerText || card.textContent || '').toLowerCase();
+                const shiny = card.classList.contains('pc-dex-card--shiny')
+                    || card.classList.contains('shiny')
+                    || !!card.querySelector('.pc-shiny-star, .shiny-star')
+                    || src.includes('/shiny/')
+                    || text.includes('shiny');
+                return {index, name, key: normalize(name), shiny, src};
+            }).filter(slot => slot.key);
+            return {count: slots.length, slots};
+            """
+        )
+        return result if isinstance(result, dict) else {"count": 0, "slots": []}
+
+    def legendary_shop_visible_result_cards(self):
+        result = self.driver.execute_script(
+            """
+            const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const shopRoots = [...document.querySelectorAll(
+                '[id*="shop" i], [class*="shop" i], [id*="mart" i], [class*="mart" i], [role="dialog"], .modal, .modal-content'
+            )].filter(visible);
+            if (!shopRoots.length) return [];
+            const cards = shopRoots.flatMap(root => [...root.querySelectorAll('.poke-card, .dex-card, [class*="pokemon" i]')])
+                .filter(visible)
+                .map((card, index) => {
+                    const img = card.querySelector('img');
+                    const src = img?.src || '';
+                    const name = (
+                        card.querySelector('.poke-name, .dex-name, .team-slot-name, [class*="name" i]')?.innerText
+                        || img?.getAttribute('alt')
+                        || card.innerText
+                        || ''
+                    ).trim().replace(/\\s+/g, ' ').slice(0, 80);
+                    const text = (card.innerText || card.textContent || '').toLowerCase();
+                    const shiny = card.classList.contains('pc-dex-card--shiny')
+                        || card.classList.contains('shiny')
+                        || !!card.querySelector('.pc-shiny-star, .shiny-star')
+                        || src.includes('/shiny/')
+                        || text.includes('shiny');
+                    return {index, name, key: normalize(name), shiny, src, text: text.slice(0, 240)};
+                })
+                .filter(card => card.key);
+            return cards;
+            """
+        )
+        return result if isinstance(result, list) else []
+
+    def legendary_shop_egg_result(self):
+        result = self.driver.execute_script(
+            """
+            const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const overlay = document.querySelector('#egg-overlay');
+            if (!overlay || !visible(overlay)) return {found: false};
+            const sprite = overlay.querySelector('.egg-reveal-sprite.egg-revealed, .egg-reveal-sprite');
+            const rawName = (
+                overlay.querySelector('.egg-result .egg-name')?.innerText
+                || overlay.querySelector('.egg-name')?.innerText
+                || sprite?.getAttribute('alt')
+                || ''
+            ).replace(/[★✨]/g, '').trim().replace(/\\s+/g, ' ');
+            const src = sprite?.src || sprite?.getAttribute('src') || '';
+            const dexMatch = String(src || '').match(/\\/(\\d+)\\.png(?:$|[?#])/);
+            const shiny = !!sprite && (
+                sprite.classList.contains('shiny')
+                || src.includes('/shiny/')
+                || /[★☆✨✦✧]/.test(overlay.innerText || '')
+                || (overlay.innerText || '').toLowerCase().includes('shiny')
+            );
+            const duplicateText = overlay.querySelector('.egg-dup')?.innerText || '';
+            return {
+                found: (!!rawName || (sprite && sprite.classList.contains('egg-revealed'))) && (!!sprite || !!rawName),
+                name: rawName,
+                key: normalize(rawName),
+                shiny,
+                src,
+                dex: dexMatch ? dexMatch[1] : '',
+                duplicateText,
+                spriteClasses: sprite ? [...sprite.classList].join(' ') : '',
+                text: (overlay.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 240)
+            };
+            """
+        )
+        if not isinstance(result, dict):
+            return {"found": False}
+        shiny_mark_codes = {0x2605, 0x2606, 0x2728, 0x2726, 0x2727}
+
+        def has_shiny_mark(value):
+            return any(ord(ch) in shiny_mark_codes for ch in str(value or ""))
+
+        def strip_shiny_marks(value):
+            return "".join(ch for ch in str(value or "") if ord(ch) not in shiny_mark_codes).strip()
+
+        if has_shiny_mark(result.get("name")) or has_shiny_mark(result.get("text")):
+            result["shiny"] = True
+            result["shinyEvidence"] = result.get("shinyEvidence") or "sparkle"
+        if result.get("shiny") and not result.get("shinyEvidence"):
+            src = str(result.get("src") or "").lower()
+            classes = str(result.get("spriteClasses") or "").lower()
+            text = str(result.get("text") or "").lower()
+            if "shiny" in classes:
+                result["shinyEvidence"] = "class"
+            elif "/shiny/" in src:
+                result["shinyEvidence"] = "src"
+            elif "shiny" in text:
+                result["shinyEvidence"] = "text"
+            else:
+                result["shinyEvidence"] = "unknown"
+        if result.get("name"):
+            result["name"] = strip_shiny_marks(result.get("name"))
+            result["key"] = self.normalize_pokemon_name(result.get("name"))
+        return result
+
+    def shop_reroll_is_hit(self, name, shiny):
+        if not shiny:
+            return False
+        name_key = self.normalize_pokemon_name(name)
+        ignored = set(getattr(self, "current_shop_ignore_pokemon_list", []) or [])
+        if name_key and name_key in ignored:
+            return False
+        target_names = set(getattr(self, "current_target_pokemon_list", []) or [])
+        if not target_names:
+            return True
+        return bool(name_key and name_key in target_names)
+
+    def legendary_shop_result_after_buy(self, before_party):
+        before_slots = before_party.get("slots", []) if isinstance(before_party, dict) else []
+        before_signature_counts = {}
+        for slot in before_slots:
+            key = f"{slot.get('key') or self.normalize_pokemon_name(slot.get('name'))}:{bool(slot.get('shiny'))}"
+            before_signature_counts[key] = before_signature_counts.get(key, 0) + 1
+        deadline = time.time() + 3.0
+        last_party = {"count": 0, "slots": []}
+        while time.time() < deadline:
+            egg_result = self.legendary_shop_egg_result()
+            if egg_result.get("found"):
+                name_key = self.normalize_pokemon_name(egg_result.get("name") or egg_result.get("key"))
+                hit = self.shop_reroll_is_hit(name_key, bool(egg_result.get("shiny")))
+                return {
+                    "found": True,
+                    "hit": hit,
+                    "name": (
+                        egg_result.get("name")
+                        or (f"Dex #{egg_result.get('dex')}" if egg_result.get("dex") else "Pokemon")
+                    ),
+                    "key": name_key,
+                    "shiny": bool(egg_result.get("shiny")),
+                    "dex": egg_result.get("dex") or "",
+                    "duplicateText": egg_result.get("duplicateText") or "",
+                    "shinyEvidence": egg_result.get("shinyEvidence") or "",
+                    "party": last_party,
+                }
+            party = self.legendary_shop_party_summary()
+            last_party = party
+            slots = party.get("slots", []) if isinstance(party, dict) else []
+            after_counts = {}
+            new_slots = []
+            for slot in slots:
+                key = f"{slot.get('key') or self.normalize_pokemon_name(slot.get('name'))}:{bool(slot.get('shiny'))}"
+                after_counts[key] = after_counts.get(key, 0) + 1
+                if after_counts[key] > before_signature_counts.get(key, 0):
+                    new_slots.append(slot)
+            if new_slots:
+                candidate = new_slots[-1]
+                name_key = self.normalize_pokemon_name(candidate.get("name") or candidate.get("key"))
+                hit = self.shop_reroll_is_hit(name_key, bool(candidate.get("shiny")))
+                return {
+                    "found": True,
+                    "hit": hit,
+                    "name": candidate.get("name") or name_key.title(),
+                    "key": name_key,
+                    "shiny": bool(candidate.get("shiny")),
+                    "party": party,
+                }
+            result_cards = self.legendary_shop_visible_result_cards()
+            if result_cards:
+                candidate = result_cards[-1]
+                name_key = self.normalize_pokemon_name(candidate.get("name") or candidate.get("key"))
+                hit = self.shop_reroll_is_hit(name_key, bool(candidate.get("shiny")))
+                if candidate.get("shiny") or name_key in set(getattr(self, "current_target_pokemon_list", []) or []):
+                    return {
+                        "found": True,
+                        "hit": hit,
+                        "name": candidate.get("name") or name_key.title(),
+                        "key": name_key,
+                        "shiny": bool(candidate.get("shiny")),
+                        "party": party,
+                    }
+            time.sleep(0.08)
+        slots = last_party.get("slots", []) if isinstance(last_party, dict) else []
+        candidate = slots[-1] if slots else {}
+        name_key = self.normalize_pokemon_name(candidate.get("name") or candidate.get("key"))
+        return {
+            "found": bool(candidate),
+            "hit": self.shop_reroll_is_hit(name_key, bool(candidate.get("shiny"))),
+            "name": candidate.get("name") or name_key.title() if candidate else "",
+            "key": name_key,
+            "shiny": bool(candidate.get("shiny")),
+            "party": last_party,
+        }
+
+    def accept_force_upload_confirmation(self, driver, timeout=5.0):
+        deadline = time.time() + float(timeout)
+        last_exc = None
+        while time.time() < deadline:
+            try:
+                alert = driver.switch_to.alert
+                alert_text = alert.text
+                alert.accept()
+                self.log(f"Legendary shop reroll: accepted force-upload confirmation ({alert_text}).")
+                return True
+            except Exception as exc:
+                last_exc = exc
+                try:
+                    alert = WebDriverWait(driver, 0.5).until(EC.alert_is_present())
+                    alert_text = alert.text
+                    alert.accept()
+                    self.log(f"Legendary shop reroll: accepted force-upload confirmation ({alert_text}).")
+                    return True
+                except Exception as wait_exc:
+                    last_exc = wait_exc
+                    time.sleep(0.1)
+        self.log(f"Legendary shop reroll: force-upload confirmation was not available ({last_exc}).")
+        return False
+
+    def dismiss_shop_egg_result_overlay(self, driver=None):
+        target_driver = driver or self.driver
+        try:
+            result = target_driver.execute_script(
+                """
+                const overlay = document.querySelector('#egg-overlay');
+                if (!overlay) return {clicked: false, reason: 'no overlay'};
+                const rect = overlay.getBoundingClientRect();
+                const style = getComputedStyle(overlay);
+                const visible = rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+                if (!visible) return {clicked: false, reason: 'overlay hidden'};
+                const x = Math.floor(window.innerWidth / 2);
+                const y = Math.floor(window.innerHeight / 2);
+                const target = document.elementFromPoint(x, y) || overlay;
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'click']) {
+                    target.dispatchEvent(new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: x,
+                        clientY: y,
+                        screenX: x,
+                        screenY: y,
+                        button: 0,
+                    }));
+                }
+                return {clicked: true};
+                """
+            )
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: could not dismiss egg result overlay ({exc}).")
+            return False
+        if isinstance(result, dict) and result.get("clicked"):
+            self.log("Legendary shop reroll: dismissed egg result overlay before force upload.")
+            time.sleep(0.4)
+            return True
+        return False
+
+    def force_upload_save_data(self, driver=None):
+        target_driver = driver or self.driver
+        self.disable_legendary_shop_network_guard(target_driver)
+        try:
+            target_driver.execute_script("window.__pokelikeBotAllowCloudUpload = true;")
+        except Exception:
+            pass
+        result = None
+        try:
+            result = target_driver.execute_script(
+                """
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const click = (el) => {
+                    el.scrollIntoView({block: 'center', inline: 'center'});
+                    el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                    el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                    el.click();
+                    el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                    el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                };
+                const account = document.querySelector('#btn-cloud-sync')
+                    || [...document.querySelectorAll('button, [role="button"]')].filter(visible).find(el => {
+                        const text = `${el.innerText || el.textContent || ''} ${el.getAttribute('aria-label') || ''} ${el.title || ''}`.toLowerCase();
+                        const menu = (el.dataset?.menu || '').toLowerCase();
+                        const id = (el.id || '').toLowerCase();
+                        return menu === 'account' || id.includes('cloud') || text.includes('cloud save');
+                    });
+                if (!account || !visible(account)) return {clicked: false, step: 'account'};
+                click(account);
+                return {clicked: true, step: 'account'};
+                """
+            )
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: could not open account menu for force upload ({exc}).")
+            result = {}
+        if not isinstance(result, dict) or not result.get("clicked"):
+            self.log("Legendary shop reroll: target found, but account/cloud menu was not found.")
+            return False
+        clicked_upload = False
+        upload_text = ""
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not clicked_upload:
+            try:
+                upload_result = target_driver.execute_script(
+                    """
+                    const visible = (el) => {
+                        if (!el) return false;
+                        const rect = el.getBoundingClientRect();
+                        const style = getComputedStyle(el);
+                        return rect.width > 0 && rect.height > 0
+                            && style.display !== 'none'
+                            && style.visibility !== 'hidden';
+                    };
+                    const click = (el) => {
+                        el.scrollIntoView({block: 'center', inline: 'center'});
+                        el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                        el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                        el.click();
+                        el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                        el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                    };
+                    const textFor = (el) => `${el.innerText || el.textContent || ''} ${el.getAttribute('aria-label') || ''} ${el.title || ''}`.toLowerCase();
+                    const button = document.querySelector('#account-force-upload-btn')
+                        || [...document.querySelectorAll('button, [role="button"]')].filter(visible).find(el => {
+                            const text = textFor(el);
+                            return (text.includes('force') && text.includes('upload'))
+                                || (text.includes('upload') && text.includes('save'));
+                        });
+                    if (!button || !visible(button)) return {clicked: false};
+                    const text = button.innerText || button.textContent || button.title || '';
+                    click(button);
+                    return {clicked: true, text};
+                    """
+                )
+                if isinstance(upload_result, dict) and upload_result.get("clicked"):
+                    clicked_upload = True
+                    upload_text = upload_result.get("text") or "Force Upload to Cloud"
+                    break
+            except Exception as exc:
+                if self.accept_force_upload_confirmation(target_driver, timeout=5.0):
+                    time.sleep(2.0)
+                    return True
+                self.log(f"Legendary shop reroll: force-upload click was interrupted ({exc}).")
+                return False
+            time.sleep(0.1)
+        if clicked_upload:
+            self.log(f"Legendary shop reroll: force upload clicked ({upload_text}).")
+            if self.accept_force_upload_confirmation(target_driver, timeout=5.0):
+                time.sleep(2.0)
+                return True
+            return False
+        self.log("Legendary shop reroll: target found, but force upload save data button was not found.")
+        return False
+
+    def close_account_modal_if_visible(self, driver=None):
+        target_driver = driver or self.driver
+        result = target_driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.click();
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
+            const close = [...document.querySelectorAll('button.btn-icon-close, button[aria-label="Close"], button')]
+                .filter(visible)
+                .find(btn => {
+                    const label = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+                    const cls = (btn.className || '').toString().toLowerCase();
+                    const glyph = !!btn.querySelector('.btn-close-glyph');
+                    return label === 'close' || cls.includes('btn-icon-close') || glyph;
+                });
+            if (!close) return false;
+            click(close);
+            return true;
+            """
+        )
+        if result:
+            self.log("Legendary shop reroll: closed account menu after force upload.")
+            time.sleep(0.4)
+        return bool(result)
+
+    def run_legendary_shop_attempt(self, seed_path, attempt_number, prepared=None):
+        config = self.current_shop_egg_config()
+        attempt_path = None
+        driver = None
+        try:
+            if prepared:
+                driver = prepared["driver"]
+                attempt_path = prepared["attempt_path"]
+                worker_id = prepared.get("worker_id", 1)
+            else:
+                attempt_path = self.reset_legendary_shop_attempt_profile(seed_path)
+                worker_id = 1
+                driver = self.launch_driver(
+                    worker_id=worker_id,
+                    make_active=True,
+                    profile_path_override=attempt_path,
+                    allow_reconnect=False,
+                )
+                self.install_legendary_shop_cloud_guard(driver)
+            self.thread_local.use_local = True
+            self.thread_local.worker_id = worker_id
+            self.driver = driver
+            self.wait = WebDriverWait(driver, 20)
+            if not prepared:
+                self.prepare_page()
+                self.ensure_home_screen_for_shop()
+                self.enable_legendary_shop_network_guard(driver)
+            before_party = self.legendary_shop_party_summary()
+            self.click_legendary_shop_buy()
+            result = self.legendary_shop_result_after_buy(before_party)
+            if result.get("found"):
+                with self.stats_lock:
+                    self.total_encounters_checked += 1
+                    if result.get("shiny"):
+                        self.total_shinies_seen += 1
+                    if result.get("hit"):
+                        self.target_encounters_seen += 1
+                self.update_stats_labels()
+                label = "shiny" if result.get("shiny") else "normal"
+                evidence = (
+                    f" ({result.get('shinyEvidence')})"
+                    if result.get("shiny") and result.get("shinyEvidence")
+                    else ""
+                )
+                self.log(
+                    f"{config['mode_label']} attempt #{attempt_number}: rolled {label}{evidence} "
+                    f"{result.get('name') or 'Pokemon'}."
+                )
+            else:
+                self.log(f"{config['mode_label']} attempt #{attempt_number}: could not identify the purchased Pokemon.")
+            if result.get("hit"):
+                self.set_status("Target found")
+                self.stop_event.set()
+                self.winning_driver = driver
+                with self.drivers_lock:
+                    self.worker_drivers = [driver]
+                self._driver = driver
+                self._wait = WebDriverWait(driver, 30)
+                self.driver = driver
+                self.wait = WebDriverWait(driver, 30)
+                self.dismiss_shop_egg_result_overlay(driver)
+                if not self.force_upload_save_data(driver):
+                    self.log("Legendary shop reroll: target found, but cloud force upload did not complete.")
+                self.close_account_modal_if_visible(driver)
+                self.log("Legendary shop reroll: keeping the winning Chrome profile open; skipping live profile backup copy.")
+                return True
+            return False
+        finally:
+            self.clear_thread_driver()
+            if driver is not None and self.winning_driver is not driver:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+                self.remove_driver_reference(driver)
+
+    def run_legendary_shop_reroll(self):
+        config = self.current_shop_egg_config()
+        ignored = list(getattr(self, "current_shop_ignore_pokemon_list", []) or [])
+        if not self.current_target_pokemon_list:
+            self.log(f"{config['mode_label']}: no Pokemon whitelist set; any non-ignored shiny roll is a hit.")
+        else:
+            self.log(
+                f"{config['mode_label']} target whitelist: "
+                + ", ".join(name.title() for name in self.current_target_pokemon_list)
+            )
+        if ignored:
+            self.log(f"{config['mode_label']} ignore list: " + ", ".join(name.title() for name in ignored))
+        self.browser_count = 1
+        self.browser_count_var.set("1")
+        seed_path = self.prepare_legendary_shop_seed_profile()
+        attempt_number = 0
+        prewarm_count = max(1, min(SHOP_REROLL_PREWARM_COUNT, 4))
+        self.log(f"{config['mode_label']}: prewarming {prewarm_count} isolated attempt browser(s).")
+        with ThreadPoolExecutor(max_workers=prewarm_count) as executor:
+            futures = {
+                executor.submit(self.prepare_shop_attempt_browser, seed_path, slot): slot
+                for slot in range(1, prewarm_count + 1)
+            }
+            while not self.stop_event.is_set():
+                done = [future for future in futures if future.done()]
+                if not done:
+                    done, _pending = wait(list(futures), return_when=FIRST_COMPLETED, timeout=0.25)
+                    done = list(done)
+                if not done:
+                    continue
+                future = done[0]
+                slot = futures.pop(future)
+                prepared = future.result()
+                if not prepared:
+                    continue
+                attempt_number += 1
+                with self.stats_lock:
+                    self.run_count = attempt_number
+                self.update_stats_labels()
+                if self.run_legendary_shop_attempt(seed_path, attempt_number, prepared=prepared):
+                    self.stop_event.set()
+                    for pending_future in list(futures):
+                        if pending_future.cancel():
+                            continue
+                        if not pending_future.done():
+                            continue
+                        try:
+                            spare = pending_future.result()
+                            spare_driver = spare.get("driver") if isinstance(spare, dict) else None
+                            if spare_driver is not None and spare_driver is not self.winning_driver:
+                                try:
+                                    spare_driver.quit()
+                                except Exception:
+                                    pass
+                                self.remove_driver_reference(spare_driver)
+                        except Exception:
+                            pass
+                    return
+                self.log(f"{config['mode_label']}: miss; closed attempt browser and queued a clean replacement.")
+                if not self.stop_event.is_set():
+                    futures[executor.submit(self.prepare_shop_attempt_browser, seed_path, slot)] = slot
+
+    def preload_dex_targets(self, driver, target_mode):
+        self.thread_local.use_local = True
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 20)
+        try:
+            self.log(f"Dex targets: preloading {target_mode} from Pokédex in the background.")
+            self.collect_missing_dex_targets(target_mode)
+        except Exception as exc:
+            self.log(f"Dex targets: background preload failed ({exc}).")
+        finally:
+            self.clear_thread_driver()
+
+    def parse_item_target_list(self):
+        targets = [
             name.strip().lower()
-            for name in self.target_pokemon_var.get().replace(";", ",").split(",")
+            for name in self.item_reroll_target_var.get().replace(";", ",").split(",")
             if name.strip()
         ]
+        return targets or [DEFAULT_ITEM_REROLL_TARGET]
+
+    def read_pokedex_modal_targets(self, target_mode):
+        if target_mode == DEX_TARGET_OFF or not self.driver:
+            return []
+        try:
+            result = self.driver.execute_async_script(
+                """
+                const mode = arguments[0];
+                const legendaryNames = new Set(arguments[1].map(name => String(name || '').toLowerCase()));
+                const done = arguments[arguments.length - 1];
+                const wantsNormal = mode === 'Missing normal Dex' || mode === 'Missing normal + shiny Dex';
+                const wantsShiny = mode === 'Missing shiny Dex' || mode === 'Missing normal + shiny Dex';
+                const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const title = (text) => normalize(text).replace(/\\b\\w/g, ch => ch.toUpperCase());
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const click = (el) => {
+                    if (!el) return false;
+                    el.scrollIntoView({block: 'center', inline: 'center'});
+                    const rect = el.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2;
+                    const y = rect.top + rect.height / 2;
+                    const target = document.elementFromPoint(x, y) || el;
+                    for (const node of [...new Set([target, el])]) {
+                        node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.click();
+                        node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    }
+                    return true;
+                };
+                const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+                const waitFor = async (fn, timeout = 2500) => {
+                    const end = Date.now() + timeout;
+                    while (Date.now() < end) {
+                        try {
+                            const value = fn();
+                            if (value) return value;
+                        } catch (e) {}
+                        await sleep(80);
+                    }
+                    return null;
+                };
+                const spriteId = (card) => {
+                    const src = card.querySelector('img')?.getAttribute('src') || '';
+                    const match = src.match(/pokemon\\/(?:shiny\\/)?(\\d+)\\.png/i);
+                    if (match) return parseInt(match[1], 10) || 0;
+                    const text = card.innerText || card.textContent || '';
+                    const textMatch = text.match(/#\\s*(\\d+)/);
+                    return textMatch ? parseInt(textMatch[1], 10) || 0 : 0;
+                };
+                const cardName = (card) => {
+                    const raw = (
+                        card.getAttribute('data-name')
+                        || card.getAttribute('aria-label')
+                        || card.querySelector('.dex-name')?.innerText
+                        || card.querySelector('img[alt]')?.getAttribute('alt')
+                        || ''
+                    ).trim();
+                    const norm = normalize(raw);
+                    if (!norm || norm === 'unknown') return '';
+                    return raw === '???' ? '' : title(raw);
+                };
+                const ensureOpen = async () => {
+                    let modal = document.querySelector('#pokedex-modal');
+                    if (!visible(modal)) {
+                        if (typeof window.openPokedexModal === 'function') {
+                            window.openPokedexModal();
+                        } else {
+                            const button = document.querySelector('button[data-menu="pokedex"], button[onclick*="openPokedexModal"], [data-tip*="Pok"]');
+                            if (button) {
+                                try { button.click(); } catch (e) { click(button); }
+                            } else {
+                                const menu = document.querySelector('#run-menu-toggle, .run-menu-toggle');
+                                click(menu);
+                                await sleep(120);
+                                const openedButton = document.querySelector('button[data-menu="pokedex"], button[onclick*="openPokedexModal"], [data-tip*="Pok"]');
+                                if (openedButton) {
+                                    try { openedButton.click(); } catch (e) { click(openedButton); }
+                                }
+                            }
+                        }
+                    }
+                    return await waitFor(() => {
+                        const el = document.querySelector('#pokedex-modal');
+                        return visible(el) && el.querySelector('#dex-grid-content') ? el : null;
+                    });
+                };
+                const activeTab = () => (
+                    document.querySelector('#pokedex-modal .dex-tab.active, .dex-tab.active')?.getAttribute('data-tab') || ''
+                ).toLowerCase();
+                const activeGen = () => (
+                    document.querySelector('#pokedex-modal .dex-gen-filter-btn.active, .dex-gen-filter-btn.active')?.getAttribute('data-gen') || ''
+                ).toLowerCase();
+                const missingActive = () => {
+                    const btn = document.querySelector('#dex-hide-caught-btn');
+                    return !!btn && btn.classList.contains('active');
+                };
+                const gridSignature = () => {
+                    const grid = document.querySelector('#dex-grid-content');
+                    return grid ? String(grid.innerText || grid.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+                };
+                const gridReady = () => {
+                    const grid = document.querySelector('#dex-grid-content');
+                    if (!visible(grid)) return false;
+                    if (grid.querySelector('.dex-card')) return true;
+                    return /no pok|no pokemon|no pokémon|match your filters/i.test(gridSignature());
+                };
+                const waitGridReady = async () => {
+                    await waitFor(gridReady, 1800);
+                    await sleep(120);
+                };
+                const selectTab = async (tabName) => {
+                    const tab = [...document.querySelectorAll('#pokedex-modal .dex-tab, .dex-tab')]
+                        .find(btn => (btn.getAttribute('data-tab') || '').toLowerCase() === tabName);
+                    if (activeTab() !== tabName) click(tab);
+                    await waitFor(() => {
+                        return activeTab() === tabName;
+                    }, 1200);
+                    await waitGridReady();
+                };
+                const setMissingOnly = async (enabled) => {
+                    const btn = document.querySelector('#dex-hide-caught-btn');
+                    if (!btn) return;
+                    if (missingActive() !== enabled) {
+                        click(btn);
+                        await waitFor(() => missingActive() === enabled, 1200);
+                        await waitGridReady();
+                    }
+                };
+                const selectAllGenerations = async () => {
+                    const all = [...document.querySelectorAll('#pokedex-modal .dex-gen-filter-btn, .dex-gen-filter-btn')]
+                        .find(btn => (btn.getAttribute('data-gen') || '').toLowerCase() === 'all');
+                    if (all && activeGen() !== 'all') {
+                        click(all);
+                        await waitFor(() => activeGen() === 'all', 1200);
+                        await waitGridReady();
+                    }
+                };
+                const forceDexState = async (tabName, missing) => {
+                    await selectTab(tabName);
+                    await selectAllGenerations();
+                    await setMissingOnly(missing);
+                    await waitGridReady();
+                    return {
+                        tab: activeTab(),
+                        gen: activeGen(),
+                        missing: missingActive(),
+                        cardCount: document.querySelectorAll('#dex-grid-content .dex-card').length,
+                        empty: !!document.querySelector('#dex-grid-content .dex-empty'),
+                        label: document.querySelector('#dex-count-label')?.innerText || '',
+                    };
+                };
+                const readCards = () => [...document.querySelectorAll('#dex-grid-content .dex-card')]
+                    .filter(visible)
+                    .map(card => ({
+                        id: spriteId(card),
+                        name: cardName(card),
+                        missing: card.classList.contains('dex-unknown')
+                            || !card.querySelector('.dex-caught-badge')
+                    }));
+                const closeModal = async () => {
+                    const modal = document.querySelector('#pokedex-modal');
+                    if (!visible(modal)) return true;
+                    const close = document.querySelector(
+                        '#pokedex-modal .btn-icon-close, '
+                        + '#pokedex-modal [aria-label="Close"], '
+                        + '#pokedex-modal button[data-shortcut="Esc"], '
+                        + '#pokedex-modal .btn-close-glyph'
+                    );
+                    if (close) click(close.closest('button') || close);
+                    await waitFor(() => !visible(document.querySelector('#pokedex-modal')), 1200);
+                    return !visible(document.querySelector('#pokedex-modal'));
+                };
+                (async () => {
+                    const modal = await ensureOpen();
+                    if (!modal) {
+                        done({ok: false, reason: 'pokedex modal did not open', targets: []});
+                        return;
+                    }
+                    const namesById = new Map();
+                    const states = [];
+                    const addNamesFromTab = async (tabName) => {
+                        states.push({stage: `names:${tabName}`, ...(await forceDexState(tabName, false))});
+                        for (const card of readCards()) {
+                            if (card.id && card.name && card.name !== '???') namesById.set(card.id, card.name);
+                        }
+                    };
+                    await addNamesFromTab('normal');
+                    await addNamesFromTab('shiny');
+
+                    const targets = [];
+                    const readMissingTab = async (tabName, shiny, includeTargets) => {
+                        const state = await forceDexState(tabName, true);
+                        states.push({stage: `missing:${tabName}`, ...state});
+                        if (!state.missing) {
+                            return {
+                                ...state,
+                                found: 0,
+                                totalMissing: 0,
+                                legendaryMissing: 0,
+                                filterFailed: true,
+                            };
+                        }
+                        const before = targets.length;
+                        let totalMissing = 0;
+                        let legendaryMissing = 0;
+                        for (const card of readCards()) {
+                            if (!card.missing) continue;
+                            totalMissing += 1;
+                            const name = card.name || namesById.get(card.id) || '';
+                            const key = normalize(name);
+                            if (!key) continue;
+                            if (legendaryNames.has(key)) {
+                                legendaryMissing += 1;
+                                continue;
+                            }
+                            if (includeTargets) {
+                                targets.push({
+                                    id: card.id || 0,
+                                    name,
+                                    key,
+                                    shiny,
+                                    source: 'pokedex-modal',
+                                    aliases: [key]
+                                });
+                            }
+                        }
+                        return {
+                            ...state,
+                            found: targets.length - before,
+                            totalMissing,
+                            legendaryMissing,
+                        };
+                    };
+                    const normalResult = await readMissingTab('normal', false, wantsNormal);
+                    const shinyResult = await readMissingTab('shiny', true, wantsShiny);
+                    if ((normalResult && normalResult.filterFailed) || (shinyResult && shinyResult.filterFailed)) {
+                        const closed = await closeModal();
+                        done({
+                            ok: false,
+                            reason: 'missing-only Pokedex filter did not activate',
+                            targets: [],
+                            states,
+                            closed,
+                        });
+                        return;
+                    }
+                    const closed = await closeModal();
+                    done({
+                        ok: true,
+                        targets,
+                        namedSpecies: namesById.size,
+                        mode,
+                        states,
+                        normalMissingFound: normalResult ? normalResult.found : null,
+                        shinyMissingFound: shinyResult ? shinyResult.found : null,
+                        missingCounts: {
+                            normal: {
+                                total: normalResult ? normalResult.totalMissing : 0,
+                                legendary: normalResult ? normalResult.legendaryMissing : 0,
+                            },
+                            shiny: {
+                                total: shinyResult ? shinyResult.totalMissing : 0,
+                                legendary: shinyResult ? shinyResult.legendaryMissing : 0,
+                            },
+                        },
+                        closed,
+                    });
+                })().catch(async error => {
+                    let closed = false;
+                    try { closed = await closeModal(); } catch (e) {}
+                    done({ok: false, reason: String(error && error.message || error), targets: [], closed});
+                });
+                """,
+                target_mode,
+                [self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES],
+            )
+        except Exception as exc:
+            self.log(f"Dex targets: modal read failed ({exc}).")
+            return None
+        targets = result.get("targets") if isinstance(result, dict) else []
+        if isinstance(result, dict):
+            self.update_dex_missing_summary(result.get("missingCounts"))
+        if not targets:
+            reason = result.get("reason") if isinstance(result, dict) else ""
+            states = result.get("states") if isinstance(result, dict) else []
+            if states:
+                state_text = " | ".join(
+                    f"{state.get('stage')} tab={state.get('tab')} gen={state.get('gen')} "
+                    f"missing={state.get('missing')} cards={state.get('cardCount')} empty={state.get('empty')}"
+                    for state in states[-4:]
+                )
+                self.log(f"Dex targets: modal states: {state_text}.")
+            if isinstance(result, dict) and "closed" in result:
+                self.log(f"Dex targets: Pokedex modal closed={result.get('closed')}.")
+            self.log(f"Dex targets: Pokédex modal returned no named targets{f' ({reason})' if reason else ''}.")
+            return []
+        self.log(
+            f"Dex targets: read {len(targets)} missing target(s) from Pokédex modal "
+            f"({int(result.get('namedSpecies') or 0)} named species cached)."
+        )
+        return targets
+
+    def read_pokedex_data_targets(self, target_mode):
+        if target_mode == DEX_TARGET_OFF or not self.driver:
+            return None
+        try:
+            result = self.driver.execute_async_script(
+                """
+                const mode = arguments[0];
+                const legendaryNames = new Set(arguments[1].map(name => String(name || '').toLowerCase()));
+                const done = arguments[arguments.length - 1];
+                const wantsNormal = mode === 'Missing normal Dex' || mode === 'Missing normal + shiny Dex';
+                const wantsShiny = mode === 'Missing shiny Dex' || mode === 'Missing normal + shiny Dex';
+                const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const title = (text) => normalize(text).replace(/\\b\\w/g, ch => ch.toUpperCase());
+                const pokemonImgRe = /pokemon\\/(?:shiny\\/)?(\\d+)\\.png/i;
+                const speciesById = new Map();
+                const speciesByName = new Map();
+                const addSpecies = (id, name, raw) => {
+                    id = parseInt(id, 10);
+                    const norm = normalize(name);
+                    if (!id || !norm || norm === 'unknown' || norm === '???') return;
+                    const item = speciesByName.get(norm) || {id, name: title(norm), aliases: new Set([norm]), pre: new Set()};
+                    item.id = item.id || id;
+                    item.name = item.name || title(norm);
+                    item.aliases.add(norm);
+                    speciesById.set(id, item);
+                    speciesByName.set(norm, item);
+                    if (raw && typeof raw === 'object') {
+                        for (const key of ['prevo', 'preEvolution', 'pre_evolution', 'baseSpecies', 'evolvesFrom', 'evolves_from']) {
+                            const value = raw[key];
+                            const parent = typeof value === 'object' ? (value && (value.name || value.species)) : value;
+                            const pre = normalize(parent);
+                            if (pre && pre !== norm) item.pre.add(pre);
+                        }
+                    }
+                };
+                const seenObjects = new Set();
+                const inspectObject = (value, depth) => {
+                    if (!value || typeof value !== 'object' || seenObjects.has(value) || depth > 5) return;
+                    seenObjects.add(value);
+                    if (Array.isArray(value)) {
+                        if (value.length <= 2500) for (const item of value) inspectObject(item, depth + 1);
+                        return;
+                    }
+                    const id = value.id ?? value.num ?? value.dex ?? value.dexNo ?? value.dexId
+                        ?? value.nationalDex ?? value.national_dex ?? value.pokedexNumber;
+                    const name = value.name ?? value.species ?? value.pokemon ?? value.label;
+                    if (id && name) addSpecies(id, name, value);
+                    for (const [key, child] of Object.entries(value)) {
+                        if (depth >= 3) continue;
+                        if (!/poke|species|dex|mon|data|list|all/i.test(key)) continue;
+                        inspectObject(child, depth + 1);
+                    }
+                };
+                for (const img of document.querySelectorAll('img[src*="/pokemon/"], img[src*="pokemon/"]')) {
+                    const match = (img.getAttribute('src') || '').match(pokemonImgRe);
+                    const alt = img.getAttribute('alt') || img.getAttribute('title') || '';
+                    if (match && alt && alt !== '???') addSpecies(match[1], alt, null);
+                }
+                for (const key of Object.getOwnPropertyNames(window)) {
+                    if (/poke|species|dex|mon|data/i.test(key)) {
+                        try { inspectObject(window[key], 0); } catch (e) {}
+                    }
+                }
+
+                const ownedNormal = new Set();
+                const ownedShiny = new Set();
+                const sourceNormal = new Set();
+                const sourceShiny = new Set();
+                const addOwned = (set, value) => {
+                    if (value === null || value === undefined) return;
+                    if (typeof value === 'number') {
+                        set.add(String(value));
+                        return;
+                    }
+                    if (typeof value === 'string') {
+                        const norm = normalize(value);
+                        if (norm) set.add(norm);
+                        const num = value.match(/\\b\\d{1,4}\\b/);
+                        if (num) set.add(String(parseInt(num[0], 10)));
+                        return;
+                    }
+                    if (typeof value !== 'object') return;
+                    const id = value.id ?? value.num ?? value.dex ?? value.dexNo ?? value.dexId
+                        ?? value.nationalDex ?? value.pokedexNumber;
+                    const name = value.name ?? value.species ?? value.pokemon;
+                    if (id) set.add(String(parseInt(id, 10)));
+                    if (name) set.add(normalize(name));
+                };
+                const inspectOwned = (key, value, depth = 0, kind = '') => {
+                    const lowerKey = String(key || '').toLowerCase();
+                    const isDex = /dex|caught|pokedex|halloffame|hall_of_fame|hof/.test(lowerKey);
+                    if (lowerKey.includes('shiny')) kind = 'shiny';
+                    else if (lowerKey.includes('normal')) kind = 'normal';
+                    else if (isDex && !kind) kind = 'normal';
+                    if (!kind && !isDex) return;
+                    const set = kind === 'shiny' ? ownedShiny : ownedNormal;
+                    const sources = kind === 'shiny' ? sourceShiny : sourceNormal;
+                    sources.add(String(key || 'unknown'));
+                    if (Array.isArray(value)) {
+                        for (const item of value) addOwned(set, item);
+                        return;
+                    }
+                    if (value && typeof value === 'object') {
+                        for (const [childKey, childValue] of Object.entries(value)) {
+                            const childLower = String(childKey || '').toLowerCase();
+                            const childKind = childLower.includes('shiny')
+                                ? 'shiny'
+                                : childLower.includes('normal')
+                                    ? 'normal'
+                                    : kind;
+                            (childKind === 'shiny' ? sourceShiny : sourceNormal).add(String(childKey || key || 'unknown'));
+                            if (childValue === true || childValue === 1 || childValue === '1' || childValue === 'true') {
+                                addOwned(childKind === 'shiny' ? ownedShiny : ownedNormal, childKey);
+                            } else if (childValue && typeof childValue === 'object' && depth < 6) {
+                                inspectOwned(childKey, childValue, depth + 1, childKind);
+                            } else {
+                                addOwned(childKind === 'shiny' ? ownedShiny : ownedNormal, childValue);
+                            }
+                        }
+                    } else {
+                        addOwned(set, value);
+                    }
+                };
+                const inspectStorage = (storage) => {
+                    for (let i = 0; i < storage.length; i += 1) {
+                        const key = storage.key(i);
+                        const raw = storage.getItem(key);
+                        try {
+                            const parsed = JSON.parse(raw);
+                            inspectObject(parsed, 0);
+                            inspectOwned(key, parsed);
+                        } catch (e) {
+                            inspectOwned(key, raw);
+                        }
+                    }
+                };
+                inspectStorage(localStorage);
+                inspectStorage(sessionStorage);
+                for (const key of Object.getOwnPropertyNames(window)) {
+                    if (/dex|caught|pokedex|halloffame|hall_of_fame|hof/i.test(key)) {
+                        try { inspectOwned(key, window[key]); } catch (e) {}
+                    }
+                }
+
+                const readIndexedDb = async () => {
+                    if (!window.indexedDB || typeof indexedDB.databases !== 'function') return;
+                    let databases = [];
+                    try { databases = await indexedDB.databases(); } catch (e) { return; }
+                    for (const dbInfo of databases || []) {
+                        const dbName = dbInfo && dbInfo.name;
+                        if (!dbName || !/poke|game|save|local|dex/i.test(dbName)) continue;
+                        await new Promise(resolve => {
+                            const req = indexedDB.open(dbName);
+                            let timer = setTimeout(resolve, 1200);
+                            req.onerror = resolve;
+                            req.onsuccess = () => {
+                                const db = req.result;
+                                const names = [...db.objectStoreNames].filter(name => /poke|dex|caught|save|state|game|hof/i.test(name));
+                                if (!names.length) {
+                                    db.close();
+                                    clearTimeout(timer);
+                                    resolve();
+                                    return;
+                                }
+                                let pending = names.length;
+                                const doneStore = () => {
+                                    pending -= 1;
+                                    if (pending <= 0) {
+                                        db.close();
+                                        clearTimeout(timer);
+                                        resolve();
+                                    }
+                                };
+                                for (const storeName of names) {
+                                    try {
+                                        const tx = db.transaction(storeName, 'readonly');
+                                        const request = tx.objectStore(storeName).getAll();
+                                        request.onsuccess = () => {
+                                            inspectObject(request.result, 0);
+                                            inspectOwned(`${dbName}:${storeName}`, request.result);
+                                        };
+                                        tx.oncomplete = doneStore;
+                                        tx.onerror = doneStore;
+                                        tx.onabort = doneStore;
+                                    } catch (e) {
+                                        doneStore();
+                                    }
+                                }
+                            };
+                        });
+                    }
+                };
+
+                (async () => {
+                    await Promise.race([readIndexedDb(), new Promise(resolve => setTimeout(resolve, 2500))]);
+                    const haveNormalData = sourceNormal.size > 0 && ownedNormal.size > 0;
+                    const haveShinyData = sourceShiny.size > 0 && ownedShiny.size > 0;
+                    const allTargets = [];
+                    const counts = {
+                        normal: {total: 0, legendary: 0},
+                        shiny: {total: 0, legendary: 0},
+                    };
+                    for (const item of speciesById.values()) {
+                        const nameKey = normalize(item.name);
+                        if (!item.id || !nameKey) continue;
+                        const ownedKeys = [String(item.id), nameKey];
+                        const isLegendary = legendaryNames.has(nameKey);
+                        if (haveNormalData && !ownedKeys.some(key => ownedNormal.has(key))) {
+                            counts.normal.total += 1;
+                            if (isLegendary) counts.normal.legendary += 1;
+                            else if (wantsNormal) allTargets.push({id: item.id, name: item.name, shiny: false, source: 'page-data'});
+                        }
+                        if (haveShinyData && !ownedKeys.some(key => ownedShiny.has(key))) {
+                            counts.shiny.total += 1;
+                            if (isLegendary) counts.shiny.legendary += 1;
+                            else if (wantsShiny) allTargets.push({id: item.id, name: item.name, shiny: true, source: 'page-data'});
+                        }
+                    }
+                    const unique = [];
+                    const seen = new Set();
+                    for (const target of allTargets) {
+                        const key = `${normalize(target.name)}|${target.shiny}`;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        const species = speciesByName.get(normalize(target.name));
+                        const pre = species ? [...species.pre] : [];
+                        unique.push({
+                            id: target.id || 0,
+                            name: target.name,
+                            key: normalize(target.name),
+                            shiny: !!target.shiny,
+                            source: target.source,
+                            aliases: [normalize(target.name), ...pre].filter(Boolean)
+                        });
+                    }
+                    done({
+                        ok: true,
+                        targets: unique,
+                        speciesCount: speciesById.size,
+                        ownedNormal: ownedNormal.size,
+                        ownedShiny: ownedShiny.size,
+                        hasNormalDexData: haveNormalData,
+                        hasShinyDexData: haveShinyData,
+                        missingCounts: counts,
+                    });
+                })().catch(error => done({ok: false, reason: String(error && error.message || error), targets: []}));
+                """,
+                target_mode,
+                [self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES],
+            )
+        except Exception as exc:
+            self.log(f"Dex targets: page-data read failed ({exc}).")
+            return None
+        if not isinstance(result, dict) or not result.get("ok"):
+            reason = result.get("reason") if isinstance(result, dict) else ""
+            self.log(f"Dex targets: page-data read did not complete{f' ({reason})' if reason else ''}.")
+            return None
+        self.update_dex_missing_summary(result.get("missingCounts"))
+        has_required_data = (
+            (target_mode == DEX_TARGET_NORMAL and result.get("hasNormalDexData"))
+            or (target_mode == DEX_TARGET_SHINY and result.get("hasShinyDexData"))
+            or (
+                target_mode == DEX_TARGET_BOTH
+                and result.get("hasNormalDexData")
+                and result.get("hasShinyDexData")
+            )
+        )
+        if not has_required_data or int(result.get("speciesCount") or 0) < 100:
+            self.log(
+                "Dex targets: page data incomplete "
+                f"(species={int(result.get('speciesCount') or 0)}, "
+                f"normalOwned={int(result.get('ownedNormal') or 0)}, "
+                f"shinyOwned={int(result.get('ownedShiny') or 0)})."
+            )
+            return None
+
+        clean_targets = []
+        seen = set()
+        legendary_keys = {self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES}
+        for target in result.get("targets") or []:
+            if not isinstance(target, dict):
+                continue
+            key = self.normalize_pokemon_name(target.get("name") or target.get("key"))
+            if not key or key in legendary_keys:
+                continue
+            shiny = bool(target.get("shiny"))
+            marker = (key, shiny)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            aliases = []
+            for alias in self.evolution_aliases_for_target(key, target.get("aliases") or [key]):
+                alias_key = self.normalize_pokemon_name(alias)
+                if alias_key and alias_key not in aliases and alias_key not in legendary_keys:
+                    aliases.append(alias_key)
+            clean_targets.append({
+                "name": key,
+                "display": str(target.get("name") or key.title()),
+                "shiny": shiny,
+                "aliases": aliases or [key],
+                "source": target.get("source") or "page-data",
+            })
+        if clean_targets:
+            preview = ", ".join(target["display"] for target in clean_targets[:12])
+            extra = len(clean_targets) - min(len(clean_targets), 12)
+            suffix = f" (+{extra} more)" if extra else ""
+            self.log(f"Dex targets loaded from page data ({target_mode}): {preview}{suffix}.")
+        else:
+            self.log(f"Dex targets: page data found no missing named entries for {target_mode}.")
+        return clean_targets
+
+    def read_pokedex_runtime_targets(self, target_mode):
+        if target_mode == DEX_TARGET_OFF or not self.driver:
+            return None
+        try:
+            result = self.driver.execute_async_script(
+                """
+                const mode = arguments[0];
+                const legendaryNames = new Set(arguments[1].map(name => String(name || '').toLowerCase()));
+                const done = arguments[arguments.length - 1];
+                const wantsNormal = mode === 'Missing normal Dex' || mode === 'Missing normal + shiny Dex';
+                const wantsShiny = mode === 'Missing shiny Dex' || mode === 'Missing normal + shiny Dex';
+                const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const title = (text) => normalize(text).replace(/\\b\\w/g, ch => ch.toUpperCase());
+                const parseStorage = (key) => {
+                    try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) { return {}; }
+                };
+                const entryName = (entry) => {
+                    if (!entry || typeof entry !== 'object') return '';
+                    return entry.name || entry.species || entry.pokemon || entry.label || '';
+                };
+                const entryAliases = (entry) => {
+                    const aliases = [];
+                    if (!entry || typeof entry !== 'object') return aliases;
+                    for (const key of ['prevo', 'preEvolution', 'pre_evolution', 'baseSpecies', 'evolvesFrom', 'evolves_from']) {
+                        const value = entry[key];
+                        if (typeof value === 'string') aliases.push(normalize(value));
+                        else if (value && typeof value === 'object') aliases.push(normalize(value.name || value.species || value.label || ''));
+                    }
+                    return aliases.filter(Boolean);
+                };
+                const dexValue = (dex, id) => dex[String(id)] ?? dex[id];
+                const isCaught = (value) => {
+                    if (typeof window._isDexCaught === 'function') {
+                        try { return !!window._isDexCaught(value); } catch (e) {}
+                    }
+                    if (typeof value === 'number') return value === 1;
+                    if (value === true || value === '1' || value === 'true') return true;
+                    return !!(value && typeof value === 'object' && value.caught);
+                };
+                (async () => {
+                    const staticDex = typeof loadStaticPokedex === 'function'
+                        ? await loadStaticPokedex()
+                        : {};
+                    const normalDex = typeof getPokedex === 'function'
+                        ? getPokedex()
+                        : parseStorage('poke_dex');
+                    const shinyDex = typeof getShinyDex === 'function'
+                        ? getShinyDex()
+                        : parseStorage('poke_shiny_dex');
+                    const staticIds = Object.keys(staticDex || {}).map(Number).filter(Number.isFinite);
+                    const catchableIds = Array.from(new Set(
+                        (Array.isArray(window.ALL_CATCHABLE_IDS) && window.ALL_CATCHABLE_IDS.length
+                            ? window.ALL_CATCHABLE_IDS
+                            : staticIds
+                        ).map(Number).filter(Number.isFinite)
+                    )).sort((a, b) => a - b);
+                    const targets = [];
+                    const counts = {
+                        normal: {total: 0, legendary: 0},
+                        shiny: {total: 0, legendary: 0},
+                    };
+                    let named = 0;
+                    for (const id of catchableIds) {
+                        const entry = staticDex[String(id)] || staticDex[id] || (
+                            typeof getStaticPokedexEntry === 'function' ? getStaticPokedexEntry(id) : null
+                        );
+                        const rawName = entryName(entry);
+                        const key = normalize(rawName);
+                        if (!key || key === 'unknown') continue;
+                        named += 1;
+                        const isLegendary = legendaryNames.has(key);
+                        if (!isCaught(dexValue(normalDex, id))) {
+                            counts.normal.total += 1;
+                            if (isLegendary) counts.normal.legendary += 1;
+                            else if (wantsNormal) {
+                                targets.push({
+                                    id,
+                                    name: rawName,
+                                    key,
+                                    shiny: false,
+                                    source: 'runtime-dex',
+                                    aliases: [key, ...entryAliases(entry)]
+                                });
+                            }
+                        }
+                        if (!dexValue(shinyDex, id)) {
+                            counts.shiny.total += 1;
+                            if (isLegendary) counts.shiny.legendary += 1;
+                            else if (wantsShiny) {
+                                targets.push({
+                                    id,
+                                    name: rawName,
+                                    key,
+                                    shiny: true,
+                                    source: 'runtime-dex',
+                                    aliases: [key, ...entryAliases(entry)]
+                                });
+                            }
+                        }
+                    }
+                    done({
+                        ok: true,
+                        targets,
+                        missingCounts: counts,
+                        staticCount: Object.keys(staticDex || {}).length,
+                        catchableCount: catchableIds.length,
+                        namedSpecies: named,
+                        normalOwned: Object.keys(normalDex || {}).length,
+                        shinyOwned: Object.keys(shinyDex || {}).length,
+                    });
+                })().catch(error => done({ok: false, reason: String(error && error.message || error), targets: []}));
+                """,
+                target_mode,
+                [self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES],
+            )
+        except Exception as exc:
+            self.log(f"Dex targets: runtime read failed ({exc}).")
+            return None
+        if not isinstance(result, dict) or not result.get("ok"):
+            reason = result.get("reason") if isinstance(result, dict) else ""
+            self.log(f"Dex targets: runtime read did not complete{f' ({reason})' if reason else ''}.")
+            return None
+        self.update_dex_missing_summary(result.get("missingCounts"))
+        if int(result.get("staticCount") or 0) < 100 or int(result.get("catchableCount") or 0) < 100:
+            self.log(
+                "Dex targets: runtime data incomplete "
+                f"(static={int(result.get('staticCount') or 0)}, "
+                f"catchable={int(result.get('catchableCount') or 0)})."
+            )
+            return None
+        clean_targets = []
+        seen = set()
+        legendary_keys = {self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES}
+        for target in result.get("targets") or []:
+            if not isinstance(target, dict):
+                continue
+            key = self.normalize_pokemon_name(target.get("name") or target.get("key"))
+            if not key or key in legendary_keys:
+                continue
+            shiny = bool(target.get("shiny"))
+            marker = (key, shiny)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            aliases = []
+            for alias in self.evolution_aliases_for_target(key, target.get("aliases") or [key]):
+                alias_key = self.normalize_pokemon_name(alias)
+                if alias_key and alias_key not in aliases and alias_key not in legendary_keys:
+                    aliases.append(alias_key)
+            clean_targets.append({
+                "name": key,
+                "display": str(target.get("name") or key.title()),
+                "shiny": shiny,
+                "aliases": aliases or [key],
+                "source": "runtime-dex",
+            })
+        preview = ", ".join(target["display"] for target in clean_targets[:12])
+        extra = len(clean_targets) - min(len(clean_targets), 12)
+        suffix = f" (+{extra} more)" if extra else ""
+        if clean_targets:
+            self.log(f"Dex targets loaded from runtime Dex ({target_mode}): {preview}{suffix}.")
+        else:
+            self.log(
+                f"Dex targets: runtime Dex found no missing non-legendary entries for {target_mode} "
+                f"(normalOwned={int(result.get('normalOwned') or 0)}, shinyOwned={int(result.get('shinyOwned') or 0)})."
+            )
+        return clean_targets
+
+    def collect_missing_dex_targets(self, target_mode):
+        if target_mode == DEX_TARGET_OFF or not self.driver:
+            return []
+        self.log("Dex targets: reading runtime Pokedex data in the background.")
+        runtime_targets = self.read_pokedex_runtime_targets(target_mode)
+        if runtime_targets is not None:
+            self.cached_dex_targets[target_mode] = runtime_targets
+            self.cached_dex_target_mode = target_mode
+            return runtime_targets
+        self.log("Dex targets: runtime Pokedex read failed; refusing to open the visual Pokedex modal.")
+        return []
+        try:
+            result = self.driver.execute_script(
+                """
+                const mode = arguments[0];
+                const legendaryNames = new Set(arguments[1].map(name => String(name || '').toLowerCase()));
+                const wantsNormal = mode === 'Missing normal Dex' || mode === 'Missing normal + shiny Dex';
+                const wantsShiny = mode === 'Missing shiny Dex' || mode === 'Missing normal + shiny Dex';
+                const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const title = (text) => normalize(text).replace(/\\b\\w/g, ch => ch.toUpperCase());
+                const speciesById = new Map();
+                const speciesByName = new Map();
+                const addSpecies = (id, name, raw) => {
+                    id = parseInt(id, 10);
+                    const norm = normalize(name);
+                    if (!id || !norm || norm === 'unknown' || norm === '???') return;
+                    const item = speciesByName.get(norm) || {id, name: title(norm), aliases: new Set([norm]), pre: new Set(), raw: []};
+                    item.id = item.id || id;
+                    item.name = item.name || title(norm);
+                    item.aliases.add(norm);
+                    if (raw) item.raw.push(raw);
+                    speciesById.set(id, item);
+                    speciesByName.set(norm, item);
+                };
+                const pokemonImgRe = /pokemon\\/(?:shiny\\/)?(\\d+)\\.png/i;
+                for (const img of document.querySelectorAll('img[src*="/pokemon/"], img[src*="pokemon/"]')) {
+                    const match = (img.getAttribute('src') || '').match(pokemonImgRe);
+                    const alt = img.getAttribute('alt') || img.getAttribute('title') || '';
+                    if (match && alt && alt !== '???') addSpecies(match[1], alt, null);
+                }
+                const seenObjects = new Set();
+                const inspectObject = (value, depth) => {
+                    if (!value || typeof value !== 'object' || seenObjects.has(value) || depth > 3) return;
+                    seenObjects.add(value);
+                    if (Array.isArray(value)) {
+                        if (value.length > 5 && value.length < 2000) {
+                            for (const item of value) inspectObject(item, depth + 1);
+                        }
+                        return;
+                    }
+                    const id = value.id ?? value.num ?? value.dex ?? value.dexNo ?? value.nationalDex ?? value.national_dex;
+                    const name = value.name ?? value.species ?? value.pokemon ?? value.label;
+                    if (id && name) addSpecies(id, name, value);
+                    for (const key of ['prevo', 'preEvolution', 'pre_evolution', 'baseSpecies']) {
+                        if (value[key] && name) {
+                            const norm = normalize(name);
+                            const pre = normalize(value[key]);
+                            const item = speciesByName.get(norm);
+                            if (item && pre && pre !== norm) item.pre.add(pre);
+                        }
+                    }
+                    for (const key of ['evolvesFrom', 'evolves_from']) {
+                        const parent = value[key];
+                        const parentName = typeof parent === 'object' ? (parent.name || parent.species) : parent;
+                        if (parentName && name) {
+                            const norm = normalize(name);
+                            const pre = normalize(parentName);
+                            const item = speciesByName.get(norm);
+                            if (item && pre && pre !== norm) item.pre.add(pre);
+                        }
+                    }
+                    for (const key of ['evolutions', 'evolvesTo', 'evolves_to']) {
+                        const evos = Array.isArray(value[key]) ? value[key] : [];
+                        for (const evo of evos) {
+                            const evoName = normalize(typeof evo === 'object' ? (evo.name || evo.species) : evo);
+                            const parent = normalize(name);
+                            const child = speciesByName.get(evoName);
+                            if (child && parent && parent !== evoName) child.pre.add(parent);
+                        }
+                    }
+                    for (const [key, child] of Object.entries(value)) {
+                        if (depth >= 2) continue;
+                        if (!/poke|species|dex|mon/i.test(key)) continue;
+                        inspectObject(child, depth + 1);
+                    }
+                };
+                for (const key of Object.getOwnPropertyNames(window)) {
+                    if (/poke|species|dex|mon/i.test(key)) {
+                        try { inspectObject(window[key], 0); } catch (e) {}
+                    }
+                }
+
+                const ownedNormal = new Set();
+                const ownedShiny = new Set();
+                const addOwned = (set, value) => {
+                    if (value === null || value === undefined) return;
+                    if (typeof value === 'number') { set.add(String(value)); return; }
+                    if (typeof value === 'string') {
+                        const norm = normalize(value);
+                        if (norm) set.add(norm);
+                        const num = value.match(/\\b\\d{1,4}\\b/);
+                        if (num) set.add(String(parseInt(num[0], 10)));
+                        return;
+                    }
+                    if (typeof value !== 'object') return;
+                    const id = value.id ?? value.num ?? value.dex ?? value.dexNo ?? value.nationalDex;
+                    const name = value.name ?? value.species ?? value.pokemon;
+                    if (id) set.add(String(parseInt(id, 10)));
+                    if (name) set.add(normalize(name));
+                };
+                const inspectOwned = (key, value) => {
+                    const lowerKey = String(key || '').toLowerCase();
+                    const isDex = lowerKey.includes('dex') || lowerKey.includes('caught') || lowerKey.includes('pokedex');
+                    if (!isDex) return;
+                    const set = lowerKey.includes('shiny') ? ownedShiny : ownedNormal;
+                    if (Array.isArray(value)) value.forEach(item => addOwned(set, item));
+                    else if (value && typeof value === 'object') {
+                        for (const [childKey, childValue] of Object.entries(value)) {
+                            if (childValue === true || childValue === 1 || childValue === '1' || childValue === 'true') addOwned(set, childKey);
+                            else addOwned(set, childValue);
+                        }
+                    }
+                };
+                for (let i = 0; i < localStorage.length; i += 1) {
+                    const key = localStorage.key(i);
+                    const raw = localStorage.getItem(key);
+                    try { inspectOwned(key, JSON.parse(raw)); } catch (e) { inspectOwned(key, raw); }
+                }
+                for (const key of Object.getOwnPropertyNames(window)) {
+                    if (/dex|caught|pokedex/i.test(key)) {
+                        try { inspectOwned(key, window[key]); } catch (e) {}
+                    }
+                }
+
+                const modalTargets = [];
+                const activeDexTab = document.querySelector('.dex-tab.active')?.getAttribute('data-tab') || '';
+                for (const card of document.querySelectorAll('#dex-grid-content .dex-card')) {
+                    const text = (card.innerText || card.textContent || '').trim();
+                    const idMatch = text.match(/#\\s*(\\d+)/) || (card.querySelector('img')?.getAttribute('src') || '').match(pokemonImgRe);
+                    const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+                    let name = card.querySelector('.dex-name')?.innerText || card.querySelector('img[alt]')?.getAttribute('alt') || '';
+                    if ((!name || name === '???') && speciesById.has(id)) name = speciesById.get(id).name;
+                    const isMissing = card.classList.contains('dex-unknown')
+                        || !(card.querySelector('.dex-caught-badge') || /already in pok/i.test(card.innerHTML));
+                    const shinyCard = activeDexTab === 'shiny' || (card.querySelector('img')?.getAttribute('src') || '').includes('/shiny/');
+                    if (isMissing && name && name !== '???') {
+                        modalTargets.push({id, name: title(name), shiny: shinyCard, source: 'modal'});
+                    }
+                }
+
+                const allTargets = [];
+                for (const entry of modalTargets) {
+                    if ((entry.shiny && wantsShiny) || (!entry.shiny && wantsNormal)) allTargets.push(entry);
+                }
+                const haveNormalData = ownedNormal.size > 0;
+                const haveShinyData = ownedShiny.size > 0;
+                if (!allTargets.length && (haveNormalData || haveShinyData)) {
+                    for (const item of speciesById.values()) {
+                        const nameKey = normalize(item.name);
+                        if (!nameKey || legendaryNames.has(nameKey)) continue;
+                        const ownedKeys = [String(item.id), nameKey];
+                        if (wantsNormal && haveNormalData && !ownedKeys.some(key => ownedNormal.has(key))) {
+                            allTargets.push({id: item.id, name: item.name, shiny: false, source: 'storage'});
+                        }
+                        if (wantsShiny && haveShinyData && !ownedKeys.some(key => ownedShiny.has(key))) {
+                            allTargets.push({id: item.id, name: item.name, shiny: true, source: 'storage'});
+                        }
+                    }
+                }
+                const unique = [];
+                const seen = new Set();
+                for (const target of allTargets) {
+                    const key = `${normalize(target.name)}|${target.shiny}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const species = speciesByName.get(normalize(target.name));
+                    const pre = species ? [...species.pre] : [];
+                    unique.push({
+                        id: target.id || 0,
+                        name: target.name,
+                        key: normalize(target.name),
+                        shiny: !!target.shiny,
+                        source: target.source,
+                        aliases: [normalize(target.name), ...pre].filter(Boolean)
+                    });
+                }
+                return {
+                    targets: unique,
+                    speciesCount: speciesById.size,
+                    ownedNormal: ownedNormal.size,
+                    ownedShiny: ownedShiny.size,
+                    modalCount: modalTargets.length
+                };
+                """,
+                target_mode,
+                [self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES],
+            )
+        except Exception as exc:
+            self.log(f"Dex targets: could not read Pokédex data ({exc}).")
+            return []
+        targets = result.get("targets") if isinstance(result, dict) else []
+        if not isinstance(targets, list):
+            targets = []
+        clean_targets = []
+        seen = set()
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            key = self.normalize_pokemon_name(target.get("name") or target.get("key"))
+            if not key or key in {self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES}:
+                continue
+            shiny = bool(target.get("shiny"))
+            marker = (key, shiny)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            aliases = []
+            for alias in self.evolution_aliases_for_target(key, target.get("aliases") or [key]):
+                alias_key = self.normalize_pokemon_name(alias)
+                if alias_key and alias_key not in aliases and alias_key not in {self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES}:
+                    aliases.append(alias_key)
+            clean_targets.append({
+                "name": key,
+                "display": str(target.get("name") or key.title()),
+                "shiny": shiny,
+                "aliases": aliases or [key],
+                "source": target.get("source") or "unknown",
+            })
+        if clean_targets:
+            preview = ", ".join(target["display"] for target in clean_targets[:12])
+            extra = len(clean_targets) - min(len(clean_targets), 12)
+            suffix = f" (+{extra} more)" if extra else ""
+            self.log(f"Dex targets loaded ({target_mode}): {preview}{suffix}.")
+        else:
+            self.log(
+                f"Dex targets: no named missing entries found for {target_mode}; "
+                "using the manual Pokemon whitelist."
+            )
+        return clean_targets
+
+    def missing_count(self, kind, legendary=False):
+        counts = getattr(self, "current_dex_missing_counts", {}) or {}
+        bucket = counts.get(kind) or {}
+        key = "legendary" if legendary else "total"
+        try:
+            return int(bucket.get(key) or 0)
+        except Exception:
+            return 0
+
+    def configure_complete_pokedex_phase(self, phase, target_mode, dex_targets=None):
+        dex_targets = dex_targets or []
+        labels = {
+            "normal_regular": "normal non-legendary",
+            "normal_legendary": "normal legendary",
+            "shiny_regular": "shiny non-legendary",
+            "shiny_legendary": "shiny legendary",
+        }
+        self.complete_pokedex_phase = phase
+        self.complete_pokedex_phase_label = labels.get(phase, phase)
+        self.current_dex_target_mode = target_mode
+        self.current_reroll_completion_mode = REROLL_COMPLETE_CHAIN_FULL_RUNS
+        self.current_item_reroll_targets = [COMPLETE_POKEDEX_ITEM_TARGET]
+        self.current_item_reroll_target = COMPLETE_POKEDEX_ITEM_TARGET
+        if phase in {"normal_regular", "shiny_regular"}:
+            self.current_dex_targets = []
+            self.current_target_pokemon_list = self.build_current_pokemon_targets(
+                self.current_manual_target_pokemon_list,
+                dex_targets,
+            )
+            self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+            self.log(
+                "Complete Pokedex phase: "
+                f"{self.complete_pokedex_phase_label}; rerolling for "
+                f"{len(self.current_target_pokemon_list)} target alias(es)."
+            )
+        else:
+            self.current_dex_targets = []
+            self.current_dex_target_names = set()
+            self.current_dex_target_by_name = {}
+            self.current_primary_target_names = set()
+            self.current_target_pokemon_list = []
+            self.current_target_pokemon = ""
+            self.log(
+                "Complete Pokedex phase: "
+                f"{self.complete_pokedex_phase_label}; rerolling for {COMPLETE_POKEDEX_ITEM_TARGET.title()}."
+            )
+        return True
+
+    def prepare_complete_pokedex_phase(self, reason="", force_refresh=False):
+        if not self.is_complete_pokedex_mode():
+            return False
+        if force_refresh:
+            self.cached_dex_targets = {}
+            self.cached_dex_target_mode = None
+        suffix = f" after {reason}" if reason else ""
+        self.log(f"Complete Pokedex: refreshing missing Dex state{suffix}.")
+
+        normal_targets = self.collect_missing_dex_targets(DEX_TARGET_NORMAL)
+        normal_legendary_missing = self.missing_count("normal", legendary=True)
+        if normal_targets:
+            return self.configure_complete_pokedex_phase(
+                "normal_regular",
+                DEX_TARGET_NORMAL,
+                normal_targets,
+            )
+        if normal_legendary_missing > 0:
+            return self.configure_complete_pokedex_phase(
+                "normal_legendary",
+                DEX_TARGET_NORMAL,
+                [],
+            )
+
+        shiny_targets = self.collect_missing_dex_targets(DEX_TARGET_SHINY)
+        shiny_legendary_missing = self.missing_count("shiny", legendary=True)
+        if shiny_targets:
+            return self.configure_complete_pokedex_phase(
+                "shiny_regular",
+                DEX_TARGET_SHINY,
+                shiny_targets,
+            )
+        if shiny_legendary_missing > 0:
+            return self.configure_complete_pokedex_phase(
+                "shiny_legendary",
+                DEX_TARGET_SHINY,
+                [],
+            )
+
+        self.complete_pokedex_phase = "done"
+        self.complete_pokedex_phase_label = "done"
+        self.current_dex_target_mode = DEX_TARGET_BOTH
+        self.current_target_pokemon_list = []
+        self.current_target_pokemon = ""
+        self.set_status("Target found")
+        self.log("Complete Pokedex: no missing normal or shiny Dex entries remain.")
+        return False
+
+    def build_current_pokemon_targets(self, manual_targets, dex_targets):
+        wanted_shiny = self.desired_reroll_shiny_state()
+        usable_dex_targets = []
+        if self.current_mode == MODE_FULL_RUN:
+            usable_dex_targets = dex_targets
+        elif self.is_pokemon_reroll_mode():
+            usable_dex_targets = [target for target in dex_targets if bool(target.get("shiny")) == wanted_shiny]
+        names = []
+        primary = set()
+        by_name = {}
+        for target in usable_dex_targets:
+            primary.add(target["name"])
+            for alias in target.get("aliases") or [target["name"]]:
+                key = self.normalize_pokemon_name(alias)
+                if not key or key in {self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES} or key in names:
+                    continue
+                names.append(key)
+                by_name[key] = target
+        for name in manual_targets:
+            key = self.normalize_pokemon_name(name)
+            if key and key not in names:
+                names.append(key)
+        self.current_dex_targets = usable_dex_targets
+        self.current_dex_target_names = set(names)
+        self.current_dex_target_by_name = by_name
+        self.current_primary_target_names = primary or set(manual_targets)
+        return names
+
+    def ensure_dex_targets_ready(self, reason=""):
+        if self.is_complete_pokedex_mode():
+            if self.complete_pokedex_phase in {"normal_regular", "shiny_regular"} and self.current_target_pokemon_list:
+                return True
+            return self.prepare_complete_pokedex_phase(reason=reason)
+        if self.current_dex_target_mode == DEX_TARGET_OFF:
+            return False
+        if self.current_dex_targets:
+            return True
+        if self.cached_dex_target_mode == self.current_dex_target_mode and self.cached_dex_targets.get(self.current_dex_target_mode):
+            dex_targets = list(self.cached_dex_targets[self.current_dex_target_mode])
+            self.current_target_pokemon_list = self.build_current_pokemon_targets(
+                self.current_manual_target_pokemon_list,
+                dex_targets,
+            )
+            self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+            self.log(f"Dex targets: loaded {len(dex_targets)} cached target(s).")
+            return True
+        suffix = f" after {reason}" if reason else ""
+        self.log(f"Dex targets: retrieving Pokédex targets{suffix}.")
+        dex_targets = self.collect_missing_dex_targets(self.current_dex_target_mode)
+        self.current_target_pokemon_list = self.build_current_pokemon_targets(
+            self.current_manual_target_pokemon_list,
+            dex_targets,
+        )
+        self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+        return bool(dex_targets)
+
+    def mark_reroll_target_acquired(self, name, shiny):
+        key = self.normalize_pokemon_name(name)
+        self.reroll_target_acquired = True
+        self.reroll_acquired_target_name = key
+        if key:
+            self.reroll_chain_completed_targets.add(key)
+        if self.current_reroll_completion_mode == REROLL_COMPLETE_STOP_NOW:
+            return
+        if key and key in self.current_target_pokemon_list:
+            self.current_target_pokemon_list = [
+                target for target in self.current_target_pokemon_list
+                if target != key
+            ]
+        label = "shiny" if shiny else "normal"
+        self.log(
+            f"Reroll target secured: {label} {(key or name or 'Pokemon').title()}; "
+            "continuing this run to completion."
+        )
+
+    def remove_acquired_target_from_active_list(self):
+        key = self.normalize_pokemon_name(getattr(self, "reroll_acquired_target_name", ""))
+        if not key:
+            return
+        remove_names = {key}
+        target = self.current_dex_target_by_name.get(key)
+        if target:
+            remove_names.update(
+                self.normalize_pokemon_name(alias)
+                for alias in target.get("aliases", [])
+                if self.normalize_pokemon_name(alias)
+            )
+            remove_names.add(self.normalize_pokemon_name(target.get("name")))
+        self.current_target_pokemon_list = [
+            name for name in self.current_target_pokemon_list
+            if self.normalize_pokemon_name(name) not in remove_names
+        ]
+        self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+        if key in self.current_dex_target_by_name:
+            target = self.current_dex_target_by_name.pop(key, None)
+            if target:
+                for alias in target.get("aliases", []):
+                    self.current_dex_target_by_name.pop(self.normalize_pokemon_name(alias), None)
+        self.current_dex_target_names = {
+            name for name in self.current_dex_target_names
+            if self.normalize_pokemon_name(name) not in remove_names
+        }
+
+    def start_bot(self):
+        if self.schedule_enabled_var.get() and self.task_schedule:
+            first_settings = self.task_schedule[0].get("settings") if isinstance(self.task_schedule[0], dict) else {}
+            self.apply_task_settings_snapshot(first_settings, update_runtime=False)
+        selected_mode = self.mode_var.get()
+        manual_target_pokemon_list = self.parse_pokemon_target_list(self.target_pokemon_var.get())
+        shop_ignore_pokemon_list = self.parse_pokemon_target_list(self.shop_ignore_pokemon_var.get())
+        evolution_preference_list = self.parse_pokemon_target_list(self.evolution_preference_var.get())
+        item_reroll_targets = self.parse_item_target_list()
         self.run_count = 0
         self.next_history_run_number = self.next_run_history_number()
         self.maps_reached = 0
@@ -2583,25 +6168,87 @@ class PokeLikeBotGUI(ctk.CTk):
         self.schedule_index = 0
         self.schedule_progress = [0 for _ in self.task_schedule]
         self.schedule_result_signature = None
+        self.pending_replace_add_clicked = False
         self.pending_passive_item_name = ""
         self.pending_passive_item_priority = None
         self.start_time = time.time()
         self.stop_event.clear()
         self.current_mode = selected_mode
+        self.current_dex_target_mode = (
+            self.full_run_dex_priority_var.get()
+            if self.current_mode == MODE_FULL_RUN
+            else DEX_TARGET_BOTH
+            if self.current_mode == MODE_COMPLETE_POKEDEX
+            else DEX_TARGET_OFF
+            if self.is_shop_reroll_mode()
+            else self.dex_target_var.get()
+        )
+        if self.current_dex_target_mode not in DEX_TARGET_OPTIONS:
+            self.current_dex_target_mode = DEX_TARGET_OFF
+        self.current_reroll_completion_mode = self.reroll_completion_var.get()
+        if self.current_reroll_completion_mode not in REROLL_COMPLETION_OPTIONS:
+            self.current_reroll_completion_mode = REROLL_COMPLETE_STOP_NOW
+        self.reroll_target_acquired = False
+        self.reroll_acquired_target_name = ""
+        self.reroll_chain_completed_targets = set()
+        self.complete_pokedex_phase = ""
+        self.complete_pokedex_phase_label = ""
+        self.current_pokegold_farm_target = self.parse_pokegold_farm_target()
         self.manual_first_attempt = bool(self.manual_start_var.get())
         self.schedule_default_starter_name = (self.starter_var.get().strip() or STARTER_NAME).lower()
         if self.schedule_active:
             self.browser_count_var.set("1")
             self.log("Task schedule enabled; using one browser so tasks advance in order.")
         self.current_run_target = self.run_target_var.get()
+        if self.current_mode == MODE_COMPLETE_POKEDEX:
+            self.current_run_target = RUN_TARGET_CHALLENGE
+            self.run_target_var.set(RUN_TARGET_CHALLENGE)
+            if self.schedule_active:
+                self.schedule_active = False
+                self.log("Complete Pokedex mode disables the task schedule and uses Challenge Mode.")
+        if self.current_mode == MODE_POKEGOLD_FARM:
+            self.current_run_target = RUN_TARGET_CHALLENGE
+            self.run_target_var.set(RUN_TARGET_CHALLENGE)
+        if self.is_shop_reroll_mode():
+            self.browser_count_var.set("1")
+            if self.schedule_active:
+                self.schedule_active = False
+                self.log(f"{self.current_shop_egg_config()['mode_label']} disables the task schedule and uses one isolated browser.")
         self.run_target_var.set(self.current_run_target)
         self.current_run_target_info = self.parse_run_target(self.current_run_target)
         self.current_tower = self.current_run_target_info.get("name", self.current_run_target)
         self.current_starter_name = self.schedule_default_starter_name
         self.apply_active_schedule_target()
-        self.current_target_pokemon_list = target_pokemon_list
-        self.current_target_pokemon = ", ".join(target_pokemon_list)
+        self.current_manual_target_pokemon_list = manual_target_pokemon_list
+        self.current_evolution_preference_list = evolution_preference_list
+        self.current_ignore_pokemon = bool(self.ignore_pokemon_var.get())
+        self.current_ignore_pokecenter = bool(self.ignore_pokecenter_var.get())
+        self.current_shiny_only_pokemon = bool(self.shiny_only_pokemon_var.get())
+        self.current_no_tm_move_tutor = bool(self.no_tm_move_tutor_var.get())
+        self.current_type_whitelist = self.parse_type_whitelist(self.type_whitelist_var.get())
+        self.current_type_filter_mode = (
+            self.type_filter_mode_var.get()
+            if self.type_filter_mode_var.get() in POKEMON_FILTER_OPTIONS
+            else POKEMON_FILTER_PRIORITIZE
+        )
+        self.current_whitelist_filter_mode = (
+            self.whitelist_filter_mode_var.get()
+            if self.whitelist_filter_mode_var.get() in POKEMON_WHITELIST_OPTIONS
+            else POKEMON_WHITELIST_ONLY
+        )
+        self.current_generation_whitelist = self.parse_generation_whitelist(self.generation_whitelist_var.get())
+        self.current_type_filter_names = self.names_for_type_filters(self.current_type_whitelist)
+        self.current_generation_filter_names = self.names_for_generation_filters(self.current_generation_whitelist)
+        self.current_dex_targets = []
+        self.current_shop_ignore_pokemon_list = shop_ignore_pokemon_list
+        self.current_target_pokemon_list = self.build_current_pokemon_targets(manual_target_pokemon_list, [])
+        self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+        self.current_item_reroll_targets = item_reroll_targets
+        self.current_item_reroll_target = ", ".join(item_reroll_targets)
         self.browser_count = self.parse_browser_count()
+        if self.is_shop_reroll_mode():
+            self.browser_count = 1
+            self.browser_count_var.set("1")
         self.chrome_restart_minutes = self.parse_chrome_restart_minutes()
         self.winning_driver = None
         self.worker_errors = []
@@ -2611,20 +6258,61 @@ class PokeLikeBotGUI(ctk.CTk):
                 f"Chrome restart enabled every {self.chrome_restart_minutes:g} minute(s); "
                 "the bot will resume the visible saved run after relaunch."
             )
+        if self.current_mode == MODE_ITEM_REROLL:
+            self.log(
+                "Item reroll target: "
+                f"{self.current_item_reroll_target}; passive/item rolls are target-only."
+            )
+        if self.current_mode == MODE_COMPLETE_POKEDEX:
+            self.log(
+                "Complete Pokedex mode enabled: normal non-legendary, normal legendary, "
+                "shiny non-legendary, then shiny legendary."
+            )
+        if self.current_mode == MODE_POKEGOLD_FARM:
+            self.log(
+                f"Farm Pokegold mode enabled: running Challenge Mode until "
+                f"{self.current_pokegold_farm_target:,} Pokegold is earned this session."
+            )
+        if self.is_shop_reroll_mode():
+            config = self.current_shop_egg_config()
+            self.log(
+                f"{config['mode_label']} mode enabled: buying {config['label']} in one isolated browser; "
+                "force upload only after a shiny whitelist hit."
+            )
+        if self.current_dex_target_mode != DEX_TARGET_OFF:
+            self.log(
+                f"Dex target mode enabled: {self.current_dex_target_mode}. "
+                "Targets will be read from the first loaded PokeLike browser."
+            )
+        if self.current_ignore_pokemon:
+            self.log("Full-run filter enabled: ignoring Pokemon nodes and Pokemon rewards.")
+        else:
+            if self.current_shiny_only_pokemon:
+                self.log("Full-run filter enabled: only shiny Pokemon will be accepted.")
+            if self.current_type_whitelist:
+                self.log(f"Full-run type whitelist: {', '.join(sorted(self.current_type_whitelist))}.")
+            if self.current_generation_whitelist:
+                self.log(f"Full-run generation whitelist: {', '.join(sorted(self.current_generation_whitelist))}.")
+        if self.current_ignore_pokecenter:
+            self.log("Full-run route filter enabled: avoiding Pokecenter paths when another route is reachable.")
+        if self.current_no_tm_move_tutor:
+            self.log("Full-run filter enabled: skipping TMs and move tutor nodes.")
 
         self.start_button.configure(state="disabled")
         self.open_browser_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.mode_selector.configure(state="disabled")
-        self.manual_start_checkbox.configure(state="disabled")
         self.run_target_selector.configure(state="disabled")
-        self.schedule_checkbox.configure(state="disabled")
-        self.schedule_button.configure(state="disabled")
+        self.settings_button.configure(state="disabled")
         self.priority_button.configure(state="disabled")
         self.starter_entry.configure(state="disabled")
         self.target_pokemon_entry.configure(state="disabled")
+        self.shop_ignore_pokemon_entry.configure(state="disabled")
+        self.manual_start_checkbox.configure(state="disabled")
+        self.headless_checkbox.configure(state="disabled")
         self.browser_count_entry.configure(state="disabled")
         self.chrome_restart_entry.configure(state="disabled")
+        self.configure_settings_controls("disabled")
         self.runtime_label.configure(text="00:00:00")
         self.money_per_hour_label.configure(text="0/h")
         self.update_stats_labels()
@@ -2647,15 +6335,17 @@ class PokeLikeBotGUI(ctk.CTk):
         self.safe_ui(lambda: self.start_button.configure(state="normal"))
         self.safe_ui(lambda: self.stop_button.configure(state="disabled"))
         self.safe_ui(lambda: self.mode_selector.configure(state="normal"))
-        self.safe_ui(lambda: self.manual_start_checkbox.configure(state="normal"))
         self.safe_ui(lambda: self.run_target_selector.configure(state="normal"))
-        self.safe_ui(lambda: self.schedule_checkbox.configure(state="normal"))
-        self.safe_ui(lambda: self.schedule_button.configure(state="normal"))
+        self.safe_ui(lambda: self.settings_button.configure(state="normal"))
         self.safe_ui(lambda: self.priority_button.configure(state="normal"))
         self.safe_ui(lambda: self.starter_entry.configure(state="normal"))
         self.safe_ui(lambda: self.target_pokemon_entry.configure(state="normal"))
+        self.safe_ui(lambda: self.shop_ignore_pokemon_entry.configure(state="normal"))
+        self.safe_ui(lambda: self.manual_start_checkbox.configure(state="normal"))
+        self.safe_ui(lambda: self.headless_checkbox.configure(state="normal"))
         self.safe_ui(lambda: self.browser_count_entry.configure(state="normal"))
         self.safe_ui(lambda: self.chrome_restart_entry.configure(state="normal"))
+        self.safe_ui(lambda: self.configure_settings_controls("normal"))
 
     def profile_path_for_worker(self, worker_id=1):
         if worker_id <= 1:
@@ -2697,6 +6387,56 @@ class PokeLikeBotGUI(ctk.CTk):
             os.makedirs(target_path, exist_ok=True)
             self.log(f"Could not copy main profile for browser {worker_id}; using empty profile: {exc}")
 
+    def chrome_profile_copy_ignore(self, _dir, names):
+        ignored_names = {
+            "SingletonCookie",
+            "SingletonLock",
+            "SingletonSocket",
+            "LOCK",
+            "lockfile",
+            "Crashpad",
+            "BrowserMetrics",
+            "ShaderCache",
+            "GrShaderCache",
+            "DawnCache",
+            "GPUCache",
+            "Code Cache",
+            "Cache",
+        }
+        ignored = set()
+        for name in names:
+            if name in ignored_names or name.startswith("BrowserMetrics"):
+                ignored.add(name)
+        return ignored
+
+    def safe_replace_profile_copy(self, source_path, target_path):
+        if not os.path.isdir(source_path):
+            raise RuntimeError(f"Source Chrome profile does not exist: {source_path}")
+        if os.path.abspath(source_path) == os.path.abspath(target_path):
+            raise RuntimeError("Refusing to copy Chrome profile onto itself.")
+        temp_path = f"{target_path}.tmp-{time.strftime('%Y%m%d-%H%M%S')}"
+        if os.path.isdir(temp_path):
+            shutil.rmtree(temp_path, ignore_errors=True)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        shutil.copytree(source_path, temp_path, ignore=self.chrome_profile_copy_ignore)
+        if os.path.isdir(target_path):
+            shutil.rmtree(target_path, ignore_errors=True)
+        os.replace(temp_path, target_path)
+
+    def legendary_shop_seed_profile_path(self):
+        return f"{SELENIUM_PROFILE_PATH}-shop-seed"
+
+    def legendary_shop_attempt_profile_path(self, slot=None):
+        suffix = "" if slot is None else f"-{int(slot)}"
+        return f"{SELENIUM_PROFILE_PATH}-shop-attempt{suffix}"
+
+    def remove_driver_reference(self, driver):
+        with self.drivers_lock:
+            self.worker_drivers = [candidate for candidate in self.worker_drivers if candidate is not driver]
+        if self._driver is driver:
+            self._driver = None
+            self._wait = None
+
     def get_chromedriver_path(self):
         with self.chromedriver_lock:
             if not self.chromedriver_path:
@@ -2732,15 +6472,100 @@ class PokeLikeBotGUI(ctk.CTk):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         return f"{SELENIUM_PROFILE_PATH}{suffix}.recovery-{timestamp}"
 
-    def launch_driver(self, worker_id=1, make_active=True):
-        self.ensure_worker_profile(worker_id)
-        profile_path = self.profile_path_for_worker(worker_id)
+    def chrome_debug_port_for_worker(self, worker_id):
+        return CHROME_DEBUG_PORT_BASE + max(0, worker_id - 1)
+
+    def mark_bot_browser_window(self, driver, worker_id):
+        if self.headless_var.get():
+            return
+        marker = "PokeLike Bot" if worker_id <= 1 else f"PokeLike Bot {worker_id}"
+        script = f"""
+(() => {{
+    const marker = {json.dumps(marker)};
+    const applyMarker = () => {{
+        if (!document.title || document.title.startsWith(marker + " - ")) {{
+            return;
+        }}
+        document.title = marker + " - " + document.title;
+    }};
+    applyMarker();
+    new MutationObserver(applyMarker).observe(
+        document.querySelector("title") || document.documentElement,
+        {{ childList: true, subtree: true, characterData: true }}
+    );
+}})();
+"""
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+            driver.execute_script(script)
+        except Exception as exc:
+            self.log(f"Could not mark browser {worker_id} window title: {exc}")
+
+    def try_reconnect_driver(self, worker_id, make_active=True):
+        if self.headless_var.get():
+            return None
+        port = self.chrome_debug_port_for_worker(worker_id)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=0.35) as response:
+                version_info = json.loads(response.read().decode("utf-8", errors="replace"))
+            if not version_info.get("webSocketDebuggerUrl"):
+                return None
+        except Exception:
+            return None
+
+        options = webdriver.ChromeOptions()
+        options.debugger_address = f"127.0.0.1:{port}"
+        try:
+            driver = webdriver.Chrome(
+                service=Service(self.get_chromedriver_path()),
+                options=options,
+            )
+        except Exception as manager_exc:
+            self.log(f"Chrome reconnect via ChromeDriverManager failed, trying Selenium Manager fallback: {manager_exc}")
+            try:
+                driver = webdriver.Chrome(options=options)
+            except Exception as selenium_exc:
+                self.log(f"Could not reconnect to browser {worker_id} on port {port}: {selenium_exc}")
+                return None
+
+        try:
+            _ = driver.current_url
+        except Exception as exc:
+            self.log(f"Reconnected browser {worker_id}, but it was not usable: {exc}")
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            return None
+
+        self.mark_bot_browser_window(driver, worker_id)
+        wait = WebDriverWait(driver, 30)
+        if make_active:
+            self.driver = driver
+            self.wait = wait
+        with self.drivers_lock:
+            if driver not in self.worker_drivers:
+                self.worker_drivers.append(driver)
+        self.log(f"Reused existing Chrome window for browser {worker_id}.")
+        return driver
+
+    def launch_driver(self, worker_id=1, make_active=True, profile_path_override=None, allow_reconnect=True):
+        if profile_path_override:
+            profile_path = profile_path_override
+        else:
+            self.ensure_worker_profile(worker_id)
+            profile_path = self.profile_path_for_worker(worker_id)
         os.makedirs(profile_path, exist_ok=True)
 
         try:
             headless = bool(self.headless_var.get())
         except Exception:
             headless = False
+
+        if allow_reconnect:
+            existing_driver = self.try_reconnect_driver(worker_id, make_active=make_active)
+            if existing_driver:
+                return existing_driver
 
         def build_options(safe=False, active_profile_path=None):
             active_profile_path = active_profile_path or profile_path
@@ -2749,7 +6574,10 @@ class PokeLikeBotGUI(ctk.CTk):
             o.add_argument("--profile-directory=Default")
             o.add_argument("--no-first-run")
             o.add_argument("--no-default-browser-check")
-            o.add_experimental_option("excludeSwitches", ["enable-logging"])
+            o.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            o.add_experimental_option("useAutomationExtension", False)
+            o.add_experimental_option("detach", True)
+            o.set_capability("unhandledPromptBehavior", "ignore")
             if headless:
                 # Headless needs these to launch reliably.
                 o.add_argument("--headless=new")
@@ -2761,16 +6589,19 @@ class PokeLikeBotGUI(ctk.CTk):
             if safe:
                 # Minimal, known-good config used as a fallback: if any enhancement
                 # flag upsets this Chrome (e.g. "DevToolsActivePort file doesn't
-                # exist"), we still launch. Visible mode gets --start-maximized.
+                # exist"), we still launch. Keep the stable DevTools port so the
+                # next app start can reuse this window.
+                o.add_argument(f"--remote-debugging-port={self.chrome_debug_port_for_worker(worker_id)}")
                 if not headless:
                     o.add_argument("--start-maximized")
                 return o
             # Enhancements: keep the game's loop running while minimized/occluded,
-            # and let Chrome pick a free DevTools port.
+            # and use a stable DevTools port so a restarted bot can reconnect.
+            o.add_argument("--disable-blink-features=AutomationControlled")
             o.add_argument("--disable-background-timer-throttling")
             o.add_argument("--disable-backgrounding-occluded-windows")
             o.add_argument("--disable-renderer-backgrounding")
-            o.add_argument("--remote-debugging-port=0")
+            o.add_argument(f"--remote-debugging-port={self.chrome_debug_port_for_worker(worker_id)}")
             if not headless:
                 o.add_argument("--start-maximized")
             return o
@@ -2836,6 +6667,7 @@ class PokeLikeBotGUI(ctk.CTk):
                             f"with minimal flags and a clean recovery profile. Original error: {first_exc}; "
                             f"minimal-flags error: {safe_exc}; recovery retry error: {recovery_exc}"
                         ) from recovery_exc
+        self.mark_bot_browser_window(driver, worker_id)
         wait = WebDriverWait(driver, 30)
         if make_active:
             self.driver = driver
@@ -3686,6 +7518,11 @@ class PokeLikeBotGUI(ctk.CTk):
             time.sleep(0.15)
 
         if self.active_screen_id() in run_screens:
+            reroll_mode = (
+                self.current_mode == MODE_SHINY_CHARM_REROLL
+                or self.is_pokemon_reroll_mode()
+                or self.is_complete_pokedex_mode()
+            )
             self.log("Existing run detected; using in-game reset to preserve login.")
             reset_result = self.driver.execute_script(
                 """
@@ -3746,6 +7583,7 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.click_optional_confirm()
                 self.driver.execute_script(
                     """
+                    const timeoutMs = arguments[0];
                     const visible = (el) => {
                         const rect = el.getBoundingClientRect();
                         return rect.width > 0 && rect.height > 0;
@@ -3774,7 +7612,7 @@ class PokeLikeBotGUI(ctk.CTk):
                             });
                     };
                     const started = Date.now();
-                    while (Date.now() - started < 800) {
+                    while (Date.now() - started < timeoutMs) {
                         const button = findConfirm();
                         if (button && button.dataset?.menu !== 'reset') {
                             clickButton(button);
@@ -3782,19 +7620,28 @@ class PokeLikeBotGUI(ctk.CTk):
                         }
                     }
                     return false;
-                    """
+                    """,
+                    160 if reroll_mode else 800,
                 )
-                try:
-                    WebDriverWait(self.driver, 1.5).until(
-                        lambda _: self.active_screen_id() in ["title-screen", "challenge-select"]
-                    )
-                except Exception:
-                    pass
+                if reroll_mode:
+                    try:
+                        WebDriverWait(self.driver, 0.2).until(
+                            lambda _: self.active_screen_id() in ["title-screen", "challenge-select"]
+                            or self.active_screen_id() in run_screens
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        WebDriverWait(self.driver, 1.5).until(
+                            lambda _: self.active_screen_id() in ["title-screen", "challenge-select"]
+                        )
+                    except Exception:
+                        pass
                 self.log(f"In-game reset requested via {reset_result.get('method')}.")
             if self.active_screen_id() in run_screens:
-                if self.current_mode == MODE_SHINY_CHARM_REROLL or self.is_pokemon_reroll_mode():
+                if reroll_mode:
                     self.log(f"Reset returned to run screen={self.active_screen_id()}; continuing reroll.")
-                    time.sleep(0.35)
                     return
                 raise RuntimeError(f"Could not leave active run screen after reset; current screen={self.active_screen_id()}")
             return
@@ -4163,7 +8010,11 @@ class PokeLikeBotGUI(ctk.CTk):
         self.apply_active_schedule_target()
         self.reset_current_run_if_needed()
 
-        if (self.current_mode == MODE_SHINY_CHARM_REROLL or self.is_pokemon_reroll_mode()) and self.is_active_run_screen():
+        if (
+            self.current_mode == MODE_SHINY_CHARM_REROLL
+            or self.is_pokemon_reroll_mode()
+            or self.is_complete_pokedex_mode()
+        ) and self.is_active_run_screen():
             self.log(f"Using active run after reset; screen={self.active_screen_id()}.")
             return False
 
@@ -4213,15 +8064,17 @@ class PokeLikeBotGUI(ctk.CTk):
             self.update_stats_labels()
             self.log("Item rolls: " + ", ".join(names))
 
-        for choice in choices:
-            choice_text = f"{choice['name']} {choice.get('text', '')}".lower()
-            if any(alias in choice_text for alias in TARGET_ITEM_ALIASES):
-                screen_before = self.active_screen_id()
-                self.click_item_index(choice["index"])
-                self.wait_until_screen_changes(screen_before, timeout=1.2)
-                self.set_status("Target found")
-                self.log(f"TARGET FOUND: {choice['name']} selected.")
-                return True
+        if target_only:
+            target_aliases = getattr(self, "current_item_reroll_targets", None) or [DEFAULT_ITEM_REROLL_TARGET]
+            for choice in choices:
+                choice_text = f"{choice['name']} {choice.get('text', '')}".lower()
+                if any(alias in choice_text for alias in target_aliases):
+                    screen_before = self.active_screen_id()
+                    self.click_item_index(choice["index"])
+                    self.wait_until_screen_changes(screen_before, timeout=1.2)
+                    self.set_status("Target found")
+                    self.log(f"TARGET FOUND: {choice['name']} selected.")
+                    return True
 
         if target_only:
             return False
@@ -4298,9 +8151,26 @@ class PokeLikeBotGUI(ctk.CTk):
     def skip_item_choice(self):
         result = self.driver.execute_script(
             """
+            const filters = arguments[0] || {};
+            const ignorePokemon = !!filters.ignorePokemon;
+            const shinyOnly = !!filters.shinyOnly;
+            const manualNames = new Set((filters.manualNames || []).map(name => String(name).toLowerCase()));
+            const typeNames = new Set((filters.typeNames || []).map(name => String(name).toLowerCase()));
+            const generationNames = new Set((filters.generationNames || []).map(name => String(name).toLowerCase()));
+            const typeWhitelist = new Set((filters.typeWhitelist || []).map(name => String(name).toLowerCase()));
+            const generationWhitelist = new Set((filters.generationWhitelist || []).map(name => String(name).toLowerCase()));
             const visible = (el) => {
                 const rect = el.getBoundingClientRect();
                 return rect.width > 0 && rect.height > 0;
+            };
+            const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const clickButton = (button) => {
+                button.scrollIntoView({block: 'center', inline: 'center'});
+                button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                button.click();
+                button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
             };
             const button = [...document.querySelectorAll('#btn-skip-item, .choice-skip-btn, .choice-skip-cell, button')]
                 .filter(visible)
@@ -4324,24 +8194,64 @@ class PokeLikeBotGUI(ctk.CTk):
     def handle_take_shiny_reward(self):
         result = self.driver.execute_script(
             """
+            const filters = arguments[0] || {};
+            const ignorePokemon = !!filters.ignorePokemon;
+            const manualNames = new Set((filters.manualNames || []).map(name => String(name).toLowerCase()));
+            const typeNames = new Set((filters.typeNames || []).map(name => String(name).toLowerCase()));
+            const generationNames = new Set((filters.generationNames || []).map(name => String(name).toLowerCase()));
+            const typeWhitelist = new Set((filters.typeWhitelist || []).map(name => String(name).toLowerCase()));
+            const generationWhitelist = new Set((filters.generationWhitelist || []).map(name => String(name).toLowerCase()));
             const visible = (el) => {
                 const rect = el.getBoundingClientRect();
                 return rect.width > 0 && rect.height > 0
                     && getComputedStyle(el).display !== 'none'
                     && getComputedStyle(el).visibility !== 'hidden';
             };
+            const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const click = (button) => {
+                button.scrollIntoView({block: 'center', inline: 'center'});
+                button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                button.click();
+                button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
             const button = document.querySelector('#btn-take-shiny');
             if (!button || !visible(button)) return {clicked: false};
-            button.scrollIntoView({block: 'center', inline: 'center'});
-            button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
-            button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-            button.click();
-            button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
-            button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            const active = document.querySelector('.screen.active') || document;
+            const screenText = (active.innerText || '').toLowerCase();
+            const name = (
+                active.querySelector('.poke-name, .dex-name, .catch-name')?.innerText
+                || active.querySelector('img[alt]')?.getAttribute('alt')
+                || ''
+            ).trim();
+            const key = normalize(name || button.innerText || screenText);
+            const typeAllowed = !typeWhitelist.size
+                || typeNames.has(key)
+                || [...typeWhitelist].some(typeName => screenText.includes(`${typeName} type`) || screenText.includes(typeName));
+            const generationAllowed = !generationWhitelist.size || generationNames.has(key);
+            const manualAllowed = !manualNames.size || manualNames.has(key);
+            if (ignorePokemon || !typeAllowed || !generationAllowed || !manualAllowed) {
+                const skipButton = [...document.querySelectorAll('#btn-skip-shiny, button, [role="button"]')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        return text.includes('skip') || text.includes('decline');
+                    });
+                if (!skipButton) return {clicked: false, filteredOut: true, name};
+                click(skipButton);
+                return {clicked: true, skipped: true, filteredOut: true, text: (skipButton.innerText || skipButton.textContent || '').trim(), name};
+            }
+            click(button);
             return {clicked: true, text: (button.innerText || button.textContent || '').trim()};
-            """
+            """,
+            self.pokemon_filter_payload(),
         )
         if result.get("clicked"):
+            if result.get("filteredOut"):
+                self.log(f"Shiny reward skipped by filters: {result.get('name') or result.get('text') or 'Pokemon'}.")
+                time.sleep(0.6)
+                return True
             self.log(f"Shiny reward: {result.get('text') or 'Take shiny Pokemon'}")
             # This is always a shiny (#btn-take-shiny). Count it. Only reached if
             # handle_pokemon_reward_policy did not already take/count it this pass,
@@ -4458,7 +8368,7 @@ class PokeLikeBotGUI(ctk.CTk):
             list(self.starting_item_priority),
             self.pending_passive_item_name,
             self.pending_passive_item_priority,
-            list(TARGET_ITEM_ALIASES),
+            list(getattr(self, "current_item_reroll_targets", None) or [DEFAULT_ITEM_REROLL_TARGET]),
         )
         if result.get("clicked"):
             if result.get("skipped"):
@@ -4797,6 +8707,8 @@ class PokeLikeBotGUI(ctk.CTk):
             self.last_leader_signature = signature
             with self.stats_lock:
                 self.run_leaders_defeated = int(self.run_leaders_defeated or 0) + 1
+            if self.is_target_item_reroll_mode():
+                self.awaiting_leader_item_roll = True
             self.log(f"Leader/E4 counted: {name} ({source or item.get('source') or 'trainer'}).")
             self.update_stats_labels()
             return True
@@ -4817,6 +8729,14 @@ class PokeLikeBotGUI(ctk.CTk):
             """
             const party = arguments[0] || {};
             const legendaryNames = new Set(arguments[1].map(name => name.toLowerCase()));
+            const filters = arguments[2] || {};
+            const ignorePokemon = !!filters.ignorePokemon;
+            const shinyOnly = !!filters.shinyOnly;
+            const manualNames = new Set((filters.manualNames || []).map(name => String(name).toLowerCase()));
+            const typeNames = new Set((filters.typeNames || []).map(name => String(name).toLowerCase()));
+            const generationNames = new Set((filters.generationNames || []).map(name => String(name).toLowerCase()));
+            const typeWhitelist = new Set((filters.typeWhitelist || []).map(name => String(name).toLowerCase()));
+            const generationWhitelist = new Set((filters.generationWhitelist || []).map(name => String(name).toLowerCase()));
             const visible = (el) => {
                 const rect = el.getBoundingClientRect();
                 return rect.width > 0 && rect.height > 0
@@ -4824,6 +8744,14 @@ class PokeLikeBotGUI(ctk.CTk):
                     && getComputedStyle(el).visibility !== 'hidden';
             };
             const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const clickButton = (button) => {
+                button.scrollIntoView({block: 'center', inline: 'center'});
+                button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                button.click();
+                button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
             const isLegendaryText = (text) => {
                 const norm = normalize(text);
                 if (norm.includes('legendary')) return true;
@@ -4843,6 +8771,11 @@ class PokeLikeBotGUI(ctk.CTk):
             });
             if (!takeButton) return {clicked: false};
             const active = document.querySelector('.screen.active') || document;
+            const rewardName = (
+                active.querySelector('.poke-name, .dex-name, .catch-name')?.innerText
+                || active.querySelector('img[alt]')?.getAttribute('alt')
+                || ''
+            ).trim();
             const rewardText = (() => {
                 const clone = active.cloneNode(true);
                 clone.querySelectorAll([
@@ -4864,6 +8797,26 @@ class PokeLikeBotGUI(ctk.CTk):
             const rewardLegendary = isLegendaryText(rewardText)
                 || isLegendaryText(takeButton.innerText || takeButton.textContent || '')
                 || !!active.querySelector('img[src*="legendary"], img[alt*="Legendary"], img[title*="Legendary"]');
+            const nameKey = normalize(rewardName || takeButton.innerText || rewardText);
+            const typeAllowed = !typeWhitelist.size
+                || typeNames.has(nameKey)
+                || [...typeWhitelist].some(typeName => rewardText.includes(`${typeName} type`) || rewardText.includes(typeName));
+            const generationAllowed = !generationWhitelist.size || generationNames.has(nameKey);
+            const manualAllowed = !manualNames.size || manualNames.has(nameKey);
+            const filterAllowed = !ignorePokemon
+                && (!shinyOnly || rewardShiny)
+                && manualAllowed
+                && typeAllowed
+                && generationAllowed;
+            if (!filterAllowed) {
+                const skipButton = buttons.find(btn => {
+                    const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                    return btn.id === 'btn-skip-shiny' || text.includes('skip') || text.includes('decline');
+                });
+                if (!skipButton) return {clicked: false, blocked: true, filteredOut: true, rewardName, rewardShiny, rewardLegendary};
+                clickButton(skipButton);
+                return {clicked: true, skipped: true, filteredOut: true, text: (skipButton.innerText || skipButton.textContent || '').trim(), rewardName, rewardShiny, rewardLegendary};
+            }
             const fullParty = (party.count || 0) >= 6;
             const canReplaceForLegendary = !fullParty
                 || !!party.hasReplaceableNonShiny
@@ -4878,29 +8831,22 @@ class PokeLikeBotGUI(ctk.CTk):
                     return btn.id === 'btn-skip-shiny' || text.includes('skip') || text.includes('decline');
                 });
                 if (!skipButton) return {clicked: false, blocked: true, fullParty, rewardShiny, rewardLegendary};
-                skipButton.scrollIntoView({block: 'center', inline: 'center'});
-                skipButton.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
-                skipButton.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-                skipButton.click();
-                skipButton.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
-                skipButton.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                clickButton(skipButton);
                 return {clicked: true, skipped: true, text: (skipButton.innerText || skipButton.textContent || '').trim(), fullParty, rewardShiny, rewardLegendary};
             }
-            takeButton.scrollIntoView({block: 'center', inline: 'center'});
-            takeButton.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
-            takeButton.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-            takeButton.click();
-            takeButton.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
-            takeButton.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
-            return {clicked: true, skipped: false, text: (takeButton.innerText || takeButton.textContent || '').trim(), fullParty, rewardShiny, rewardLegendary};
+            clickButton(takeButton);
+            return {clicked: true, skipped: false, text: (takeButton.innerText || takeButton.textContent || '').trim(), fullParty, rewardShiny, rewardLegendary, rewardName};
             """,
             party,
             list(LEGENDARY_POKEMON_NAMES),
+            self.pokemon_filter_payload(),
         )
         if not result.get("clicked"):
             return False
         if result.get("skipped"):
-            if result.get("rewardLegendary"):
+            if result.get("filteredOut"):
+                self.log(f"Pokemon reward skipped by filters: {result.get('rewardName') or result.get('text') or 'Pokemon'}.")
+            elif result.get("rewardLegendary"):
                 self.log("Legendary reward skipped: full team had no valid replacement.")
             else:
                 self.log("Pokemon reward skipped: full shiny team and reward was not shiny.")
@@ -4908,6 +8854,7 @@ class PokeLikeBotGUI(ctk.CTk):
             if result.get("fullParty"):
                 self.pending_team_replace = True
                 self.pending_replace_allow_any = bool(result.get("rewardShiny"))
+                self.pending_replace_add_clicked = False
                 if result.get("rewardLegendary"):
                     self.pending_replace_policy = "legendary_shiny" if result.get("rewardShiny") else "legendary"
                 else:
@@ -4960,6 +8907,7 @@ class PokeLikeBotGUI(ctk.CTk):
             const allowAny = arguments[0];
             const policy = arguments[1] || 'default';
             const legendaryNames = new Set(arguments[2].map(name => name.toLowerCase()));
+            const addAlreadyClicked = !!arguments[3];
             const visible = (el) => {
                 const rect = el.getBoundingClientRect();
                 return rect.width > 0 && rect.height > 0
@@ -5003,7 +8951,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
                     return text.includes('add ') && text.includes(' to team');
                 });
-            if (addButton) {
+            if (addButton && !addAlreadyClicked) {
                 clickElement(addButton);
                 return {clicked: true, addClicked: true, text: (addButton.innerText || addButton.textContent || '').trim(), policy};
             }
@@ -5053,20 +9001,55 @@ class PokeLikeBotGUI(ctk.CTk):
                         || text.includes('keep team')
                         || text.includes('cancel swap');
                 });
+            const swapPromptText = normalize([
+                active.querySelector('h2')?.innerText || '',
+                active.querySelector('#swap-prompt')?.innerText || '',
+                active.innerText || ''
+            ].join(' '));
+            const replacementPromptVisible = !!keepTeamButton && (
+                candidates.length > 0
+                || swapPromptText.includes('team full')
+                || swapPromptText.includes('choose a pokemon to release')
+                || swapPromptText.includes('choose a pok mon to release')
+                || swapPromptText.includes('replace a pokemon')
+                || swapPromptText.includes('replace a pok mon')
+            );
             let selected = null;
             if (policy === 'legendary' || policy === 'legendary_shiny') {
                 // A non-shiny legendary only ever releases a non-shiny, non-legendary
                 // Pokémon — never sacrifice a shiny for a non-shiny legendary. If the
                 // whole team is shiny, selected stays null -> keep team as-is.
                 selected = candidates.find(candidate => !candidate.shiny && !candidate.legendary);
-                // A SHINY legendary may release a shiny (shiny-for-shiny), keeping slot 0.
+                // A shiny legendary may release a regular shiny only when no
+                // normal non-legendary Pokemon can be released, keeping slot 0.
                 if (!selected && policy === 'legendary_shiny') {
                     selected = candidates.find(candidate => candidate.index > 0 && candidate.shiny && !candidate.legendary);
                 }
+            } else if (policy === 'shiny') {
+                // A shiny reward can replace any non-shiny Pokemon. Prefer
+                // regular non-legendaries first, but do not keep a normal
+                // legendary over a new shiny when no regular non-shiny exists.
+                selected = candidates.find(candidate => !candidate.shiny && !candidate.legendary)
+                    || candidates.find(candidate => !candidate.shiny);
             } else {
-                selected = candidates.find(candidate => !candidate.shiny) || (allowAny ? candidates[0] : null);
+                selected = candidates.find(candidate => !candidate.shiny && !candidate.legendary)
+                    || (allowAny ? candidates.find(candidate => !candidate.legendary) : null);
             }
             if (!selected) {
+                if (addAlreadyClicked && !candidates.length) {
+                    return {clicked: false, waitingReplacement: true, policy};
+                }
+                if (replacementPromptVisible && keepTeamButton) {
+                    clickElement(keepTeamButton);
+                    return {
+                        clicked: true,
+                        keptTeam: true,
+                        count: candidates.length,
+                        text: (keepTeamButton.innerText || keepTeamButton.textContent || '').trim(),
+                        policy,
+                        noValidReplacement: true
+                    };
+                }
                 if (policy === 'add_only') {
                     const incomingCard = active.querySelector([
                         '#swap-incoming .poke-card',
@@ -5102,6 +9085,7 @@ class PokeLikeBotGUI(ctk.CTk):
             self.pending_replace_allow_any,
             self.pending_replace_policy,
             list(LEGENDARY_POKEMON_NAMES),
+            self.pending_replace_add_clicked,
         )
         if not result.get("clicked"):
             return False
@@ -5111,6 +9095,9 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.pending_team_replace = False
                 self.pending_replace_allow_any = False
                 self.pending_replace_policy = "default"
+                self.pending_replace_add_clicked = False
+            else:
+                self.pending_replace_add_clicked = True
             time.sleep(0.6)
             return True
         if result.get("incomingClicked"):
@@ -5123,6 +9110,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     self.pending_team_replace = False
                     self.pending_replace_allow_any = False
                     self.pending_replace_policy = "default"
+                    self.pending_replace_add_clicked = False
             except Exception as exc:
                 self.log(f"Team replace: incoming Pokemon click failed ({exc}).")
             finally:
@@ -5138,12 +9126,14 @@ class PokeLikeBotGUI(ctk.CTk):
             self.pending_team_replace = False
             self.pending_replace_allow_any = False
             self.pending_replace_policy = "default"
+            self.pending_replace_add_clicked = False
             self.log(f"Team replace: kept team as-is ({result.get('policy') or 'default'} policy).")
             time.sleep(0.6)
             return True
         self.pending_team_replace = False
         self.pending_replace_allow_any = False
         self.pending_replace_policy = "default"
+        self.pending_replace_add_clicked = False
         self.log(f"Team replace: replaced {result.get('name') or 'Pokemon'}.")
         time.sleep(0.6)
         return True
@@ -5151,9 +9141,26 @@ class PokeLikeBotGUI(ctk.CTk):
     def handle_event_pokemon_reward(self):
         result = self.driver.execute_script(
             """
+            const filters = arguments[0] || {};
+            const ignorePokemon = !!filters.ignorePokemon;
+            const shinyOnly = !!filters.shinyOnly;
+            const manualNames = new Set((filters.manualNames || []).map(name => String(name).toLowerCase()));
+            const typeNames = new Set((filters.typeNames || []).map(name => String(name).toLowerCase()));
+            const generationNames = new Set((filters.generationNames || []).map(name => String(name).toLowerCase()));
+            const typeWhitelist = new Set((filters.typeWhitelist || []).map(name => String(name).toLowerCase()));
+            const generationWhitelist = new Set((filters.generationWhitelist || []).map(name => String(name).toLowerCase()));
             const visible = (el) => {
                 const rect = el.getBoundingClientRect();
                 return rect.width > 0 && rect.height > 0;
+            };
+            const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const clickButton = (button) => {
+                button.scrollIntoView({block: 'center', inline: 'center'});
+                button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                button.click();
+                button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
             };
             const buttons = [...document.querySelectorAll('button, [role="button"], .btn-primary, .btn-secondary')]
                 .filter(visible);
@@ -5165,6 +9172,35 @@ class PokeLikeBotGUI(ctk.CTk):
                     || text.includes('take pokémon');
             });
             if (!button) return {clicked: false};
+            const active = document.querySelector('.screen.active') || document;
+            const screenText = (active.innerText || '').toLowerCase();
+            const name = (
+                active.querySelector('.poke-name, .dex-name, .catch-name')?.innerText
+                || active.querySelector('img[alt]')?.getAttribute('alt')
+                || ''
+            ).trim();
+            const key = normalize(name || button.innerText || screenText);
+            const shiny = screenText.includes('shiny')
+                || !!active.querySelector('.pc-shiny-star, .shiny-star, .shiny-badge, img[src*="/shiny/"]');
+            const typeAllowed = !typeWhitelist.size
+                || typeNames.has(key)
+                || [...typeWhitelist].some(typeName => screenText.includes(`${typeName} type`) || screenText.includes(typeName));
+            const generationAllowed = !generationWhitelist.size || generationNames.has(key);
+            const manualAllowed = !manualNames.size || manualNames.has(key);
+            const filterAllowed = !ignorePokemon
+                && (!shinyOnly || shiny)
+                && manualAllowed
+                && typeAllowed
+                && generationAllowed;
+            if (!filterAllowed) {
+                const skipButton = buttons.find(btn => {
+                    const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                    return text.includes('skip') || text.includes('decline');
+                });
+                if (!skipButton) return {clicked: false, filteredOut: true, name};
+                clickButton(skipButton);
+                return {clicked: true, skipped: true, filteredOut: true, text: (skipButton.innerText || skipButton.textContent || '').trim(), name};
+            }
             button.scrollIntoView({block: 'center', inline: 'center'});
             button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
             button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
@@ -5172,10 +9208,14 @@ class PokeLikeBotGUI(ctk.CTk):
             button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
             button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
             return {clicked: true, text: (button.innerText || button.textContent || '').trim()};
-            """
+            """,
+            self.pokemon_filter_payload(),
         )
         if result.get("clicked"):
-            self.log(f"Random event Pokemon reward: {result.get('text') or 'Take this Pokemon'}")
+            if result.get("filteredOut"):
+                self.log(f"Random event Pokemon reward skipped by filters: {result.get('name') or result.get('text') or 'Pokemon'}.")
+            else:
+                self.log(f"Random event Pokemon reward: {result.get('text') or 'Take this Pokemon'}")
             time.sleep(0.6)
             return True
         return False
@@ -5189,6 +9229,12 @@ class PokeLikeBotGUI(ctk.CTk):
                     && getComputedStyle(el).display !== 'none'
                     && getComputedStyle(el).visibility !== 'hidden';
             };
+            const normalizePokemonName = (value) => String(value || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, ' ')
+                .trim()
+                .replace(/\\s+/g, ' ');
+            const preferredNames = [...new Set((arguments[0] || []).map(normalizePokemonName).filter(Boolean))];
             const textRoot = document.querySelector('.screen.active') || document.body;
             const titleText = (textRoot.innerText || document.body.innerText || '').toLowerCase();
             const choiceRoots = [
@@ -5344,13 +9390,49 @@ class PokeLikeBotGUI(ctk.CTk):
                         && looksLikeChoice;
                 });
             const choicePool = directChoiceCards.length ? directChoiceCards : candidates;
-            const card = choicePool[Math.floor(Math.random() * choicePool.length)]
-                || candidates.find(el => el.querySelector('img[src*="/pokemon/"], .dex-name, .poke-name'))
-                || candidates.find(el => !el.matches('button'))
-                || candidates[0];
+            const cardNames = (el) => {
+                const names = [];
+                const add = (value) => {
+                    const normalized = normalizePokemonName(value);
+                    if (normalized && !names.includes(normalized)) names.push(normalized);
+                };
+                el.querySelectorAll('.dex-name, .poke-name').forEach(node => add(node.innerText || node.textContent));
+                el.querySelectorAll('img[alt]').forEach(img => add(img.getAttribute('alt')));
+                ['data-evolution', 'data-evo', 'data-name', 'aria-label', 'title'].forEach(attr => add(el.getAttribute(attr)));
+                const text = (el.innerText || el.textContent || '').trim();
+                text.split(/\\n+/).forEach(add);
+                add(text);
+                return names;
+            };
+            const choiceMatchesPreference = (el) => {
+                const names = cardNames(el);
+                return preferredNames.find(preferred => names.some(name => name === preferred));
+            };
+            let preferredMatch = null;
+            if (preferredNames.length) {
+                preferredMatch = choicePool.find(choiceMatchesPreference)
+                    || candidates.find(choiceMatchesPreference);
+            }
+            if (preferredNames.length && !preferredMatch) {
+                return {
+                    found: false,
+                    blocked: true,
+                    preferred: true,
+                    choices: choicePool.map(el => cardNames(el)[0] || 'unknown').slice(0, 12),
+                };
+            }
+            const card = preferredNames.length
+                ? preferredMatch
+                : (
+                    choicePool[Math.floor(Math.random() * choicePool.length)]
+                    || candidates.find(el => el.querySelector('img[src*="/pokemon/"], .dex-name, .poke-name'))
+                    || candidates.find(el => !el.matches('button'))
+                    || candidates[0]
+                );
             if (!card) return {clicked: false};
             const name = (
-                card.querySelector('.dex-name, .poke-name')?.innerText
+                cardNames(card)[0]
+                || card.querySelector('.dex-name, .poke-name')?.innerText
                 || card.querySelector('img[alt]')?.getAttribute('alt')
                 || card.innerText
                 || card.textContent
@@ -5364,9 +9446,12 @@ class PokeLikeBotGUI(ctk.CTk):
             // move+click sends a genuine hover+click that the handler accepts.
             card.setAttribute('data-bot-evo-target', '1');
             card.scrollIntoView({block: 'center', inline: 'center'});
-            return {found: true, name};
-            """
+            return {found: true, name, preferred: preferredNames.length > 0};
+            """,
+            getattr(self, "current_evolution_preference_list", []) or [],
         )
+        if result.get("blocked"):
+            return True
         if not result.get("found"):
             return False
         name = result.get("name") or "random option"
@@ -5514,6 +9599,55 @@ class PokeLikeBotGUI(ctk.CTk):
             return True
         return False
 
+    def visible_play_again_result_state(self):
+        try:
+            return self.driver.execute_script(
+                """
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const active = document.querySelector('.screen.active') || document.body;
+                const buttons = [...document.querySelectorAll('#btn-retry, #btn-play-again, #btn-stage-again, button, [role="button"]')]
+                    .filter(visible);
+                const button = buttons.find(btn => {
+                    const text = normalize(btn.innerText || btn.textContent || '');
+                    const id = (btn.id || '').toLowerCase();
+                    return id === 'btn-retry'
+                        || id === 'btn-play-again'
+                        || id === 'btn-stage-again'
+                        || text.includes('play again');
+                });
+                if (!button) return {visible: false};
+                const id = (button.id || '').toLowerCase();
+                const text = normalize([
+                    active.id || '',
+                    active.innerText || active.textContent || '',
+                    button.innerText || button.textContent || ''
+                ].join(' '));
+                let won = null;
+                if (id === 'btn-stage-again' || text.includes('win screen') || text.includes('victory') || text.includes('champion') || text.includes('completed')) {
+                    won = true;
+                } else if (id === 'btn-retry' || text.includes('game over') || text.includes('defeat') || text.includes('lost')) {
+                    won = false;
+                }
+                return {
+                    visible: true,
+                    won,
+                    screen: won === false ? 'gameover-screen' : 'win-screen',
+                    buttonId: id,
+                    text: (button.innerText || button.textContent || '').trim()
+                };
+                """
+            )
+        except Exception:
+            return {"visible": False}
+
     def click_home_if_visible(self):
         result = self.driver.execute_script(
             """
@@ -5598,13 +9732,16 @@ class PokeLikeBotGUI(ctk.CTk):
         if not ok:
             raise RuntimeError(f"Could not click item choice #{index}")
 
-    def choose_passive_item(self, target_only=False):
+    def choose_passive_item(self, target_only=False, target_aliases=None, priority_items=None):
+        target_aliases = target_aliases or getattr(self, "current_item_reroll_targets", None) or [DEFAULT_ITEM_REROLL_TARGET]
+        priority_items = priority_items or list(self.starting_item_priority)
         result = self.driver.execute_script(
             """
             const priority = arguments[0].map(name => name.toLowerCase());
             const targetAliases = arguments[1].map(name => name.toLowerCase());
             const targetOnly = arguments[2];
             const ignored = arguments[3].map(name => name.toLowerCase());
+            const forcedFirstPickAliases = ['shiny hunter'];
             const allCards = [...document.querySelectorAll('#passive-choices .item-card, #passive-choices .passive-card, #item-choices .item-card, .item-card.passive-card')];
             const isVisible = (card) => {
                 const rect = card.getBoundingClientRect();
@@ -5641,7 +9778,8 @@ class PokeLikeBotGUI(ctk.CTk):
             const known = (arguments[4] || []).map(name => name.toLowerCase());
             const priorityMatches = (card) => {
                 const norm = normalize(nameFor(card));
-                return priority.some(alias => norm.includes(alias));
+                return priority.some(alias => norm.includes(alias))
+                    || forcedFirstPickAliases.some(alias => norm.includes(alias));
             };
             const isRecognized = (card) => {
                 const norm = normalize(nameFor(card));
@@ -5689,15 +9827,39 @@ class PokeLikeBotGUI(ctk.CTk):
                 card.click();
             };
             const names = cards.map(card => nameFor(card).replace(/\\s+/g, ' ').slice(0, 80));
+            const forcedFirstPick = visibleCards.find(card => {
+                const norm = normalize(nameFor(card));
+                return forcedFirstPickAliases.some(alias => norm.includes(alias));
+            });
+            if (forcedFirstPick) {
+                const selectedName = nameFor(forcedFirstPick) || (forcedFirstPick.innerText || '').trim();
+                const forcedNorm = normalize(selectedName);
+                const forcedIsTarget = targetAliases.some(alias => forcedNorm.includes(normalize(alias)));
+                if (!targetOnly || forcedIsTarget) {
+                    clickCard(forcedFirstPick);
+                    return {
+                        clicked: true,
+                        forcedFirstPick: true,
+                        target: targetOnly && forcedIsTarget,
+                        fallback: false,
+                        priority: 0,
+                        name: selectedName.replace(/\\s+/g, ' ').slice(0, 80),
+                        names,
+                        ignoredNames,
+                        unrecognizedNames,
+                        itemDetails
+                    };
+                }
+            }
             const priorityIndex = (card) => {
                 const norm = normalize(nameFor(card));
                 const idx = priority.findIndex(alias => norm.includes(alias));
                 return idx < 0 ? null : idx;
             };
             if (targetOnly) {
-                let target = cards.find(card => {
-                    const text = nameFor(card).toLowerCase();
-                    return targetAliases.some(alias => text.includes(alias));
+                let target = visibleCards.find(card => {
+                    const norm = normalize(nameFor(card));
+                    return targetAliases.some(alias => norm.includes(normalize(alias)));
                 });
                 if (target) {
                     const selectedName = nameFor(target) || (target.innerText || '').trim();
@@ -5740,8 +9902,8 @@ class PokeLikeBotGUI(ctk.CTk):
                 itemDetails
             };
             """,
-            list(self.starting_item_priority),
-            list(TARGET_ITEM_ALIASES),
+            list(priority_items),
+            list(target_aliases),
             target_only,
             # "Don't pick" set = user's ignore list + every unknown item already
             # discovered (kept separate from the user's editable ignore list).
@@ -5784,7 +9946,9 @@ class PokeLikeBotGUI(ctk.CTk):
         self.pending_passive_item_name = result.get("name") or ""
         self.pending_passive_item_priority = result.get("priority")
         self.record_run_passive_item(self.pending_passive_item_name)
-        if result.get("fallback"):
+        if result.get("forcedFirstPick"):
+            self.log(f"Selected passive item: {result.get('name')} (forced Shiny Hunter first pick)")
+        elif result.get("fallback"):
             self.log(f"No known starting priority item offered; selected passive fallback: {result.get('name')}")
         else:
             priority = result.get("priority")
@@ -5971,6 +10135,33 @@ class PokeLikeBotGUI(ctk.CTk):
             self.last_team_snapshot = snapshot
             self.last_team_snapshot_signature = signature
 
+    def completed_primary_dex_target_in_party(self):
+        if not self.should_complete_current_reroll_run():
+            return False
+        if self.is_complete_pokedex_mode():
+            return False
+        primary_targets = {
+            self.normalize_pokemon_name(name)
+            for name in getattr(self, "current_primary_target_names", set())
+            if self.normalize_pokemon_name(name)
+        }
+        if not primary_targets:
+            return False
+        snapshot = list(getattr(self, "last_team_snapshot", []) or [])
+        if not snapshot:
+            try:
+                party = self.party_summary()
+                snapshot = party.get("slots", []) if isinstance(party, dict) else []
+            except Exception:
+                snapshot = []
+        for slot in snapshot:
+            name = self.normalize_pokemon_name(slot.get("name") if isinstance(slot, dict) else "")
+            if name in primary_targets:
+                self.set_status("Target found")
+                self.log(f"Dex target evolved/owned in party: {name.title()}. Ending current reroll completion run early.")
+                return True
+        return False
+
     def get_map_route_data(self):
         return self.driver.execute_script(
             """
@@ -6105,7 +10296,10 @@ class PokeLikeBotGUI(ctk.CTk):
         # passive-item pick (maps_started). Reaching map 3 by either signal
         # re-enables party fill / catching.
         prioritize_party_fill = self.maps_reached >= 2 or self.maps_started >= 3
-        needs_move_tutor = self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES
+        avoid_pokemon = bool(getattr(self, "current_ignore_pokemon", False))
+        avoid_pokecenter = bool(getattr(self, "current_ignore_pokecenter", False))
+        avoid_tm_move_tutor = bool(getattr(self, "current_no_tm_move_tutor", False))
+        needs_move_tutor = self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES and not avoid_tm_move_tutor
         node_by_index = {node["index"]: node for node in route.get("nodes", [])}
         outgoing = {}
         for edge in route.get("edges", []):
@@ -6128,15 +10322,28 @@ class PokeLikeBotGUI(ctk.CTk):
 
         def route_bonus(node):
             kinds = reachable_kinds(node["index"])
-            if "legendary" in kinds:
-                return -300
+            penalty = 0
+            if avoid_pokecenter and "poke-center" in kinds:
+                penalty += 250
+            if avoid_pokemon and ({"legendary", "pokeball", "grass"} & kinds):
+                penalty += 350
+            if avoid_tm_move_tutor and "move-tutor" in kinds:
+                penalty += 175
+            if not avoid_pokemon and "legendary" in kinds:
+                return penalty - 300
             if needs_move_tutor and "move-tutor" in kinds:
-                return -200
-            return 0
+                return penalty - 200
+            return penalty
 
         def score(node):
             kind = node.get("kind") or "other"
-            if kind == "legendary":
+            if avoid_pokemon and kind in {"legendary", "pokeball", "grass"}:
+                base = 500
+            elif avoid_pokecenter and kind == "poke-center":
+                base = 450
+            elif avoid_tm_move_tutor and kind == "move-tutor":
+                base = 425
+            elif kind == "legendary":
                 base = 0
             elif needs_move_tutor and kind == "move-tutor":
                 base = 1
@@ -6156,17 +10363,51 @@ class PokeLikeBotGUI(ctk.CTk):
                 base = 6
             elif kind == "poke-center":
                 base = 7
-            elif kind == "move-tutor":
-                base = 8
             elif kind == "trade":
-                base = 9
+                base = 8
+            elif kind == "move-tutor":
+                base = 99
             else:
                 base = 10
             return (base + route_bonus(node), 0)
 
+        # If the visible map has any route that avoids disabled content, filter to
+        # that subset. Some maps can force a Pokecenter or catch branch; in those
+        # cases the score penalty still picks the least-bad route instead of
+        # stalling.
+        filtered_nodes = nodes
+        if avoid_pokecenter:
+            without_center = [
+                node for node in filtered_nodes
+                if node.get("kind") != "poke-center" and "poke-center" not in reachable_kinds(node["index"])
+            ]
+            if without_center:
+                filtered_nodes = without_center
+        if avoid_pokemon:
+            without_pokemon = [
+                node for node in filtered_nodes
+                if node.get("kind") not in {"legendary", "pokeball", "grass"}
+                and not ({"legendary", "pokeball", "grass"} & reachable_kinds(node["index"]))
+            ]
+            if without_pokemon:
+                filtered_nodes = without_pokemon
+        if avoid_tm_move_tutor:
+            without_move_tutor = [
+                node for node in filtered_nodes
+                if node.get("kind") != "move-tutor" and "move-tutor" not in reachable_kinds(node["index"])
+            ]
+            if without_move_tutor:
+                filtered_nodes = without_move_tutor
+
         # Tie-break downward to make steady progress toward the leader.
-        chosen = sorted(nodes, key=lambda node: (*score(node), -node["y"]))[0]
-        if chosen.get("kind") == "legendary":
+        chosen = sorted(filtered_nodes, key=lambda node: (*score(node), -node["y"]))[0]
+        if avoid_pokemon and chosen.get("kind") in {"legendary", "pokeball", "grass"}:
+            self.log("Map route: Pokemon avoidance is enabled, but this map appears to force a Pokemon route.")
+        elif avoid_pokecenter and chosen.get("kind") == "poke-center":
+            self.log("Map route: Pokecenter avoidance is enabled, but this map appears to force Pokecenter.")
+        elif avoid_tm_move_tutor and chosen.get("kind") == "move-tutor":
+            self.log("Map route: TM/move-tutor avoidance is enabled, but this map appears to force move tutor.")
+        elif chosen.get("kind") == "legendary":
             self.log("Map route: prioritizing reachable legendary node.")
         elif route_bonus(chosen) <= -300:
             self.log("Map route: choosing path toward legendary node.")
@@ -6297,7 +10538,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     """
                 )
                 self.js_click("#btn-continue-battle", timeout=0.4)
-                if is_loss_continue and self.current_mode == MODE_FULL_RUN:
+                if is_loss_continue and self.should_use_full_run_logic():
                     for _ in range(20):
                         time.sleep(0.15)
                         next_screen = self.active_screen_id()
@@ -6326,7 +10567,10 @@ class PokeLikeBotGUI(ctk.CTk):
             time.sleep(0.12)
 
     def handle_move_tutor(self):
-        skip_move_tutor = self.current_mode == MODE_FULL_RUN and self.main_move_upgrades_used >= MAIN_MOVE_TARGET_USES
+        skip_move_tutor = (
+            bool(getattr(self, "current_no_tm_move_tutor", False))
+            or (self.should_use_full_run_logic() and self.main_move_upgrades_used >= MAIN_MOVE_TARGET_USES)
+        )
         result = self.driver.execute_script(
             """
             const skipMoveTutor = arguments[0];
@@ -6412,10 +10656,10 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         if result.get("clicked"):
             if result.get("skipped"):
-                reason = result.get("reason") or f"main Pokemon already has {MAIN_MOVE_TARGET_USES} move upgrade(s)"
+                reason = "TM/move tutor disabled" if getattr(self, "current_no_tm_move_tutor", False) else result.get("reason") or f"main Pokemon already has {MAIN_MOVE_TARGET_USES} move upgrade(s)"
                 self.log(f"Move tutor/TM skipped: {reason}.")
                 return True
-            if self.current_mode == MODE_FULL_RUN and self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES:
+            if self.should_use_full_run_logic() and self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES:
                 self.main_move_upgrades_used += 1
             self.log(f"Move tutor: {result.get('pokemon') or 'first Pokemon'} {result.get('move')}")
             return True
@@ -6426,6 +10670,7 @@ class PokeLikeBotGUI(ctk.CTk):
     def handle_tm_item_equip(self):
         result = self.driver.execute_script(
             """
+            const skipTm = !!arguments[0];
             const visible = (el) => {
                 if (!el) return false;
                 const rect = el.getBoundingClientRect();
@@ -6466,6 +10711,18 @@ class PokeLikeBotGUI(ctk.CTk):
                 || !!document.querySelector('#btn-skip-tutor')
                 || activeText.includes('move tutor');
             if (!isTmContext || isTutorContext || !rows.length) return {clicked: false};
+            if (skipTm) {
+                const skipButton = [...document.querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        const id = (btn.id || '').toLowerCase();
+                        return text.includes('skip') || text.includes('cancel') || text.includes('no thanks') || id.includes('skip') || id.includes('cancel');
+                    });
+                if (!skipButton) return {clicked: false, blocked: true, reason: 'TM disabled and no skip button was visible'};
+                click(skipButton);
+                return {clicked: true, skipped: true, reason: 'TM disabled'};
+            }
             for (const row of rows) {
                 const mastered = (row.innerText || row.textContent || '').toLowerCase();
                 if (mastered.includes('already mastered') || mastered.includes('(mastered)') || mastered.includes('move slots full')) {
@@ -6483,9 +10740,16 @@ class PokeLikeBotGUI(ctk.CTk):
                 return {clicked: true, pokemon: pokemon.trim(), text: (button.innerText || button.textContent || '').trim()};
             }
             return {clicked: false, blocked: true, reason: 'no Pokemon could learn the TM'};
-            """
+            """,
+            bool(getattr(self, "current_no_tm_move_tutor", False)),
         )
         if result.get("clicked"):
+            if result.get("skipped"):
+                self.log(f"TM skipped: {result.get('reason') or 'disabled'}.")
+                time.sleep(0.45)
+                return True
+            if self.should_use_full_run_logic() and self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES:
+                self.main_move_upgrades_used += 1
             self.log(f"TM used on {result.get('pokemon') or 'first Pokemon'}.")
             time.sleep(0.45)
             return True
@@ -6667,6 +10931,117 @@ class PokeLikeBotGUI(ctk.CTk):
         return True
         return False
 
+    def use_moon_stone_on_target_if_available(self):
+        target_names = []
+        if getattr(self, "reroll_acquired_target_name", ""):
+            target_names.append(self.reroll_acquired_target_name)
+        target_names.extend(list(getattr(self, "current_primary_target_names", set()) or []))
+        target_names.extend(list(getattr(self, "current_target_pokemon_list", []) or []))
+        target_names = [
+            name for name in dict.fromkeys(self.normalize_pokemon_name(name) for name in target_names)
+            if name
+        ]
+        if not target_names:
+            return False
+        result = self.driver.execute_script(
+            """
+            const targetNames = new Set(arguments[0].map(name => String(name || '').toLowerCase()));
+            const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const target = document.elementFromPoint(x, y) || el;
+                for (const node of [...new Set([target, el])]) {
+                    node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.click();
+                    node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                }
+            };
+            const isMoonStoneText = (text) => {
+                const norm = normalize(text);
+                return norm.includes('moon stone') || norm.includes('moonstone');
+            };
+            const modalRows = [...document.querySelectorAll('#item-equip-modal .equip-pokemon-row, .equip-pokemon-row')]
+                .filter(visible);
+            if (modalRows.length) {
+                const activeText = [
+                    document.querySelector('#item-equip-modal')?.innerText || '',
+                    document.querySelector('.screen.active')?.innerText || ''
+                ].join(' ');
+                if (!isMoonStoneText(activeText)) return {clicked: false};
+                const rows = modalRows.map(row => {
+                    const name = row.querySelector('.equip-poke-name')?.innerText
+                        || row.querySelector('img[alt]')?.getAttribute('alt')
+                        || row.innerText
+                        || '';
+                    const norm = normalize(name);
+                    const button = [...row.querySelectorAll('button, [role="button"]')]
+                        .filter(visible)
+                        .find(btn => {
+                            const text = normalize(btn.innerText || btn.textContent || '');
+                            return text.includes('use') || text.includes('evolve') || text.includes('select');
+                        });
+                    return {row, name, norm, button};
+                });
+                const selected = rows.find(item => targetNames.has(item.norm))
+                    || rows.find(item => [...targetNames].some(target => item.norm.includes(target) || target.includes(item.norm)));
+                if (!selected) return {clicked: false, blocked: true, reason: 'target Pokemon not in Moon Stone picker'};
+                click(selected.button || selected.row);
+                return {clicked: true, pokemon: selected.name, phase: 'picker'};
+            }
+            const active = document.querySelector('.screen.active');
+            if (active?.id && active.id !== 'item-screen' && active.id !== 'elite-prep-screen'
+                && active.id !== 'map-screen' && active.id !== 'catch-screen'
+                && active.id !== 'passive-screen') {
+                return {clicked: false};
+            }
+            const badgeSelectors = [
+                '#item-bar .item-badge',
+                '#elite-prep-items .item-badge',
+                '#item-team-bar .item-badge',
+                '#catch-team-bar .item-badge',
+                '#passive-team-bar .item-badge'
+            ];
+            const badge = [...document.querySelectorAll(badgeSelectors.join(','))]
+                .filter(visible)
+                .find(el => {
+                    if (el.closest('#item-choices, .item-card, #passive-choices, .passive-card')) return false;
+                    const text = [
+                        el.innerText || el.textContent || '',
+                        ...[...el.querySelectorAll('img')].map(img => `${img.getAttribute('alt') || ''} ${img.getAttribute('title') || ''} ${img.getAttribute('src') || ''}`)
+                    ].join(' ');
+                    return isMoonStoneText(text);
+                });
+            if (!badge) return {clicked: false};
+            click(badge);
+            return {clicked: true, pokemon: '', phase: 'badge'};
+            """,
+            target_names,
+        )
+        if result.get("clicked"):
+            pokemon = " ".join(str(result.get("pokemon") or "").split())
+            if pokemon:
+                self.log(f"Moon Stone: used on {pokemon}.")
+            else:
+                self.log("Moon Stone: opened target picker.")
+            time.sleep(0.45)
+            return True
+        if result.get("blocked"):
+            self.log(f"Moon Stone skipped: {result.get('reason')}.")
+        return False
+
     def record_catch_scan(self, result, phase):
         checked = int(result.get("checked") or 0)
         target_count = int(result.get("targetCount") or 0)
@@ -6828,7 +11203,8 @@ class PokeLikeBotGUI(ctk.CTk):
             target_name = result.get("name") or self.current_target_pokemon or "any Pokemon"
             shiny_label = "shiny" if target_shiny else "normal"
             self.log(f"TARGET FOUND: {shiny_label} {target_name} in catch choices.")
-            return True
+            self.mark_reroll_target_acquired(result.get("name") or target_name, target_shiny)
+            return self.current_reroll_completion_mode == REROLL_COMPLETE_STOP_NOW
 
         if not self.catch_reroll_used and self.click_catch_rerolls_if_available():
             self.record_catch_scan(result, "before reroll")
@@ -6855,12 +11231,33 @@ class PokeLikeBotGUI(ctk.CTk):
                 const immediateOnly = arguments[0];
                 const priorityNames = arguments[1].map(name => name.toLowerCase());
                 const legendaryNames = new Set(arguments[2].map(name => name.toLowerCase()));
+                const dexPriorityNames = new Set(arguments[3].map(name => name.toLowerCase()));
+                const dexTargetMode = arguments[4] || 'Off';
+                const filters = arguments[5] || {};
+                const ignorePokemon = !!filters.ignorePokemon;
+                const shinyOnly = !!filters.shinyOnly;
+                const manualNames = new Set((filters.manualNames || []).map(name => String(name).toLowerCase()));
+                const typeNames = new Set((filters.typeNames || []).map(name => String(name).toLowerCase()));
+                const generationNames = new Set((filters.generationNames || []).map(name => String(name).toLowerCase()));
+                const typeWhitelist = new Set((filters.typeWhitelist || []).map(name => String(name).toLowerCase()));
+                const typeMode = filters.typeMode || 'Prioritize';
+                const whitelistMode = filters.whitelistMode || 'Only whitelist';
+                const generationWhitelist = new Set((filters.generationWhitelist || []).map(name => String(name).toLowerCase()));
                 const matchAnyPriorityName = priorityNames.length === 0;
+                const hardWhitelist = manualNames.size && whitelistMode !== 'Prioritize whitelist';
+                const hardType = typeWhitelist.size && typeMode === 'Only';
+                const filtersActive = ignorePokemon || shinyOnly || hardWhitelist || hardType || generationWhitelist.size;
                 const visible = (el) => {
                     const rect = el.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0;
                 };
                 const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const typeFromText = (text) => {
+                    const norm = normalize(text);
+                    return [...typeWhitelist].some(typeName =>
+                        norm.includes(`${typeName} type`) || norm.split(' ').includes(typeName)
+                    );
+                };
                 const cards = [...document.querySelectorAll('#catch-choices .poke-card, #catch-choices [role="button"], .catch-card')]
                     .filter(visible);
                 if (!cards.length) return {clicked: false, reason: 'none'};
@@ -6876,23 +11273,53 @@ class PokeLikeBotGUI(ctk.CTk):
                     const alt = (card.querySelector('img[alt]')?.getAttribute('alt') || '').toLowerCase();
                     const nameLower = name.toLowerCase();
                     const normalizedText = normalize(`${name} ${alt} ${text} ${src}`);
-                    const priorityName = !matchAnyPriorityName && priorityNames.some(target =>
+                    const rawPriorityName = !matchAnyPriorityName && priorityNames.some(target =>
                         nameLower === target || alt === target || text.includes(target)
                     );
+                    const dexPriorityName = [...dexPriorityNames].some(target =>
+                        nameLower === target || alt === target || text.includes(target)
+                    );
+                    const manualPriorityName = rawPriorityName && !dexPriorityName;
+                    const shiny = card.classList.contains('pc-dex-card--shiny')
+                        || card.classList.contains('shiny')
+                        || !!card.querySelector('.pc-shiny-star, .shiny-star')
+                        || src.includes('/shiny/')
+                        || text.includes('shiny');
+                    const nameKey = normalize(name || alt);
+                    const typeAllowed = !typeWhitelist.size
+                        || typeNames.has(nameKey)
+                        || typeFromText(`${name} ${alt} ${text} ${src}`);
+                    const generationAllowed = !generationWhitelist.size || generationNames.has(nameKey);
+                    const manualMatched = manualNames.has(nameKey);
+                    const manualAllowed = !manualNames.size
+                        || whitelistMode === 'Prioritize whitelist'
+                        || manualMatched
+                        || (whitelistMode === 'Only whitelist + shiny' && shiny);
+                    const typeMatched = typeAllowed && typeWhitelist.size;
+                    const filterAllowed = !ignorePokemon
+                        && (!shinyOnly || shiny)
+                        && manualAllowed
+                        && (!hardType || typeAllowed)
+                        && generationAllowed;
+                    const dexAllowed = !dexPriorityName
+                        ? false
+                        : dexTargetMode === 'Missing shiny Dex'
+                            ? shiny
+                            : dexTargetMode === 'Missing normal + shiny Dex'
+                                ? true
+                                : !shiny;
                     return {
                         card,
                         index,
                         name,
-                        priorityName,
-                        shiny: card.classList.contains('pc-dex-card--shiny')
-                            || card.classList.contains('shiny')
-                            || !!card.querySelector('.pc-shiny-star, .shiny-star')
-                            || src.includes('/shiny/')
-                            || text.includes('shiny'),
+                        priorityName: manualPriorityName || dexAllowed,
+                        manualPriorityName,
+                        dexPriorityName: dexAllowed,
+                        filterAllowed,
+                        typePriority: typeMatched,
+                        shiny,
                         legendary: normalizedText.includes('legendary')
-                            || [...legendaryNames].some(legendary => nameLower === legendary || alt === legendary || normalizedText.includes(legendary)),
-                        dragon: text.includes('dragon') || card.querySelector('.type-dragon'),
-                        bug: text.includes('bug') || card.querySelector('.type-bug')
+                            || [...legendaryNames].some(legendary => nameLower === legendary || alt === legendary || normalizedText.includes(legendary))
                     };
                 };
                 const infos = cards.map(infoFor);
@@ -6900,25 +11327,41 @@ class PokeLikeBotGUI(ctk.CTk):
                 const shinyNames = infos.filter(info => info.shiny).map(info => info.name || 'unknown');
                 const names = infos.map(info => `${info.index + 1}:${info.name || 'unknown'} shiny=${info.shiny}`).join(' | ');
                 const signature = infos.map(info => `${info.index}:${info.name || 'unknown'}:${info.shiny}`).join('|');
-                const selected = infos.find(info => info.shiny)
-                    || infos.find(info => info.legendary)
-                    || infos.find(info => info.priorityName)
-                    || infos.find(info => info.dragon)
-                    || infos.find(info => info.bug)
-                    || infos[0];
-                const reason = selected.shiny ? 'shiny'
+                const selectable = filtersActive
+                    ? (ignorePokemon ? [] : infos.filter(info => info.filterAllowed || info.dexPriorityName))
+                    : infos;
+                if (!selectable.length) {
+                    return {
+                        clicked: false,
+                        filteredOut: true,
+                        reason: ignorePokemon ? 'ignore pokemon' : 'filters',
+                        offered: infos.map(info => `${info.name || 'unknown'}:${info.shiny ? 'shiny' : info.legendary ? 'legendary' : 'other'}`),
+                        checked: infos.length,
+                        targetCount,
+                        shinyNames,
+                        names,
+                        signature
+                    };
+                }
+                const selected = selectable.find(info => info.dexPriorityName)
+                    || selectable.find(info => info.shiny)
+                    || selectable.find(info => info.legendary)
+                    || selectable.find(info => info.priorityName)
+                    || selectable.find(info => info.typePriority)
+                    || selectable[0];
+                const reason = selected.dexPriorityName ? 'dex target'
+                    : selected.shiny ? 'shiny'
                     : selected.legendary ? 'legendary'
                     : selected.priorityName ? 'pokemon list'
-                    : selected.dragon ? 'dragon'
-                    : selected.bug ? 'bug'
+                    : selected.typePriority ? 'type'
                     : 'random';
-                if (immediateOnly && reason !== 'pokemon list' && reason !== 'shiny' && reason !== 'legendary' && reason !== 'dragon') {
+                if (immediateOnly && reason !== 'dex target' && reason !== 'pokemon list' && reason !== 'shiny' && reason !== 'legendary' && reason !== 'type') {
                     return {
                         clicked: false,
                         deferred: true,
                         name: selected.name,
                         reason,
-                        offered: infos.map(info => `${info.name || 'unknown'}:${info.priorityName ? 'list' : info.shiny ? 'shiny' : info.dragon ? 'dragon' : info.bug ? 'bug' : 'other'}`),
+                        offered: infos.map(info => `${info.name || 'unknown'}:${info.dexPriorityName ? 'dex' : info.priorityName ? 'list' : info.shiny ? 'shiny' : info.typePriority ? 'type' : 'other'}`),
                         checked: infos.length,
                         targetCount,
                         shinyNames,
@@ -6937,7 +11380,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     clicked: true,
                     name: selected.name,
                     reason,
-                    offered: infos.map(info => `${info.name || 'unknown'}:${info.priorityName ? 'list' : info.shiny ? 'shiny' : info.dragon ? 'dragon' : info.bug ? 'bug' : 'other'}`),
+                    offered: infos.map(info => `${info.name || 'unknown'}:${info.dexPriorityName ? 'dex' : info.priorityName ? 'list' : info.shiny ? 'shiny' : info.typePriority ? 'type' : 'other'}`),
                     checked: infos.length,
                     targetCount,
                     shinyNames,
@@ -6947,10 +11390,17 @@ class PokeLikeBotGUI(ctk.CTk):
                 """,
                 immediate_only,
                 self.current_target_pokemon_list,
-                list(LEGENDARY_POKEMON_NAMES),
+                [self.normalize_pokemon_name(name) for name in LEGENDARY_POKEMON_NAMES],
+                list(getattr(self, "current_dex_target_names", set()) or []),
+                self.current_dex_target_mode,
+                self.pokemon_filter_payload(),
             )
 
         result = click_priority_choice(immediate_only=True)
+        if result.get("filteredOut") and not self.catch_reroll_used and self.click_catch_rerolls_if_available():
+            self.record_catch_scan(result, "full run filtered before reroll")
+            time.sleep(0.4)
+            result = click_priority_choice(immediate_only=False)
         if result.get("deferred") and not self.catch_reroll_used and self.click_catch_rerolls_if_available():
             self.record_catch_scan(result, "full run before reroll")
             time.sleep(0.4)
@@ -6965,22 +11415,37 @@ class PokeLikeBotGUI(ctk.CTk):
             self.log(f"Catch screen: selected {result.get('name') or 'Pokemon'} by {result.get('reason')} priority.")
             time.sleep(0.8)
             return False
+        if result.get("filteredOut"):
+            self.record_catch_scan(result, "full run filtered")
+            self.restart_attempt = True
+            self.log(
+                "Catch screen: no Pokemon passed the active filters; restarting run. "
+                f"Offered: {result.get('offered') or result.get('names') or 'unknown'}."
+            )
+            return False
         self.log("Catch screen had no clickable Pokemon choices.")
         return False
 
     def handle_active_screen(self):
         screen = self.active_screen_id()
 
-        if self.current_mode == MODE_FULL_RUN:
+        if self.should_use_full_run_logic():
             self.record_money_earned_if_visible()
         if screen not in ["gameover-screen", "win-screen"]:
             self.refresh_team_snapshot()
+            if self.completed_primary_dex_target_in_party():
+                return True
         if (
-            self.current_mode == MODE_FULL_RUN
+            self.should_use_full_run_logic()
             and screen not in ["gameover-screen", "win-screen"]
-            and self.click_play_again_if_visible()
         ):
-            return False
+            result_state = self.visible_play_again_result_state()
+            if result_state.get("visible"):
+                won = result_state.get("won")
+                if won is not None:
+                    self.record_run_history_result(bool(won), result_state.get("screen") or screen)
+                if self.click_play_again_if_visible():
+                    return False
 
         reward_screens = {
             "catch-screen",
@@ -7002,6 +11467,9 @@ class PokeLikeBotGUI(ctk.CTk):
         if screen in equip_screens and self.handle_tm_item_equip():
             return False
 
+        if screen in equip_screens and self.use_moon_stone_on_target_if_available():
+            return False
+
         if screen in move_tutor_screens and self.handle_move_tutor():
             time.sleep(0.5)
             return False
@@ -7016,6 +11484,7 @@ class PokeLikeBotGUI(ctk.CTk):
             and self.swap_team_count() < 6
         ):
             self.pending_replace_allow_any = False
+            self.pending_replace_add_clicked = False
             self.pending_replace_policy = "add_only"
 
         if screen in {"swap-screen", "catch-screen", "shiny-screen"} and self.handle_team_replace_choice():
@@ -7039,7 +11508,7 @@ class PokeLikeBotGUI(ctk.CTk):
         if screen in {"catch-screen", "shiny-screen"} and self.handle_event_pokemon_reward():
             return False
 
-        if self.is_pokemon_reroll_mode() and screen in [
+        if self.is_pokemon_reroll_mode() and not self.should_complete_current_reroll_run() and screen in [
             "battle-screen",
             "swap-screen",
             "trade-screen",
@@ -7058,7 +11527,7 @@ class PokeLikeBotGUI(ctk.CTk):
             time.sleep(0.25)
             return False
 
-        if self.current_mode == MODE_FULL_RUN and screen in [
+        if self.should_use_full_run_logic() and screen in [
             "map-screen",
             "item-screen",
             "catch-screen",
@@ -7067,10 +11536,12 @@ class PokeLikeBotGUI(ctk.CTk):
         ]:
             if self.use_rare_candy_on_starter_if_available():
                 return False
+            if self.use_moon_stone_on_target_if_available():
+                return False
 
         if screen == "map-screen":
             self.catch_reroll_used = False
-            if self.is_pokemon_reroll_mode():
+            if self.is_pokemon_reroll_mode() and not self.should_complete_current_reroll_run():
                 if self.click_catch_map_node_direct():
                     return False
                 node = None
@@ -7096,7 +11567,7 @@ class PokeLikeBotGUI(ctk.CTk):
             self.record_leader_or_elite_if_visible("elite prep", include_map_info=True)
 
         if screen == "item-screen":
-            if self.is_pokemon_reroll_mode():
+            if self.is_pokemon_reroll_mode() and not self.should_complete_current_reroll_run():
                 if self.visible_item_choice_context():
                     self.choose_item(target_only=False)
                     return False
@@ -7106,15 +11577,25 @@ class PokeLikeBotGUI(ctk.CTk):
 
             if self.awaiting_leader_item_roll:
                 self.awaiting_leader_item_roll = False
-                if self.current_mode == MODE_SHINY_CHARM_REROLL:
-                    self.log("Regular item reward screen reached; waiting for starting item rolls.")
-                    return self.choose_item(target_only=False)
-                reroll_mode = self.current_mode == MODE_SHINY_CHARM_REROLL
+                if self.is_target_item_reroll_mode():
+                    found = self.choose_item(target_only=True)
+                    if not found:
+                        self.restart_attempt = True
+                        self.log(
+                            f"{self.current_item_reroll_target.title()} was not in the first leader item rolls. Restarting."
+                        )
+                    elif self.is_complete_pokedex_mode():
+                        self.mark_reroll_target_acquired(COMPLETE_POKEDEX_ITEM_TARGET, False)
+                        return False
+                    return found
+                reroll_mode = self.is_target_item_reroll_mode()
                 found = self.choose_item(target_only=reroll_mode)
                 if not found:
                     if reroll_mode:
                         self.restart_attempt = True
-                        self.log("Target shiny item was not in the first leader item rolls. Restarting.")
+                        self.log(
+                            f"{self.current_item_reroll_target.title()} was not in the first leader item rolls. Restarting."
+                        )
                     else:
                         self.log("Shiny Charm was not in the first leader item rolls; continuing full run.")
                 return found
@@ -7122,9 +11603,17 @@ class PokeLikeBotGUI(ctk.CTk):
             return self.choose_item(target_only=False)
 
         if screen == "catch-screen":
-            if self.current_mode == MODE_SHINY_POKEMON_REROLL:
+            if self.should_complete_current_reroll_run():
+                return self.choose_priority_catch()
+            if self.current_mode == MODE_SHINY_POKEMON_REROLL or (
+                self.current_mode == MODE_COMPLETE_POKEDEX
+                and self.complete_pokedex_phase == "shiny_regular"
+            ):
                 return self.handle_target_shiny_catch()
-            if self.current_mode == MODE_NORMAL_POKEMON_REROLL:
+            if self.current_mode == MODE_NORMAL_POKEMON_REROLL or (
+                self.current_mode == MODE_COMPLETE_POKEDEX
+                and self.complete_pokedex_phase == "normal_regular"
+            ):
                 return self.handle_target_normal_catch()
 
             return self.choose_priority_catch()
@@ -7137,14 +11626,24 @@ class PokeLikeBotGUI(ctk.CTk):
             # valid Pokémon when the team is full. Otherwise keep the team as-is.
             incoming = self.swap_incoming_info() or {}
             swap_party_count = self.swap_team_count()
+            if self.pokemon_filters_enabled() and not self.pokemon_name_allowed_by_filters(
+                incoming.get("name"),
+                shiny=bool(incoming.get("shiny")),
+            ):
+                self.log(f"Team replace: skipped incoming Pokemon by filters ({incoming.get('name') or 'unknown'}).")
+                self.js_click("#btn-cancel-swap")
+                time.sleep(0.6)
+                return False
             if (incoming.get("legendary") or incoming.get("hasAdd")) and swap_party_count < 6:
                 self.pending_team_replace = True
                 self.pending_replace_allow_any = False
+                self.pending_replace_add_clicked = False
                 self.pending_replace_policy = "add_only"
                 if self.handle_team_replace_choice():
                     return False
                 self.pending_team_replace = False
                 self.pending_replace_allow_any = False
+                self.pending_replace_add_clicked = False
                 self.pending_replace_policy = "default"
                 self.log("Team replace: waiting for Add to team control on underfilled team.")
                 time.sleep(0.4)
@@ -7153,10 +11652,12 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.record_legendary_encounter(f"swap:{incoming.get('name')}:{self.active_screen_id()}")
                 self.pending_team_replace = True
                 self.pending_replace_allow_any = bool(incoming.get("shiny"))
+                self.pending_replace_add_clicked = False
                 self.pending_replace_policy = "legendary_shiny" if incoming.get("shiny") else "legendary"
                 if self.handle_team_replace_choice():
                     return False
                 self.pending_team_replace = False
+                self.pending_replace_add_clicked = False
             self.js_click("#btn-cancel-swap")
             time.sleep(0.6)
             return False
@@ -7167,14 +11668,21 @@ class PokeLikeBotGUI(ctk.CTk):
             return False
 
         if screen == "passive-screen":
-            if self.current_mode == MODE_SHINY_CHARM_REROLL:
+            if self.is_target_item_reroll_mode():
+                self.awaiting_leader_item_roll = False
                 found = self.choose_passive_item(target_only=True)
                 if not found:
                     self.restart_attempt = True
-                    self.log("Shiny Hunter was not in the starting item rolls. Restarting.")
+                    self.log(
+                        f"{self.current_item_reroll_target.title()} was not in the passive rolls. Restarting."
+                    )
+                elif self.is_complete_pokedex_mode():
+                    self.mark_reroll_target_acquired(COMPLETE_POKEDEX_ITEM_TARGET, False)
+                    return False
                 return found
 
             self.choose_passive_item()
+            self.ensure_dex_targets_ready("starting item selection")
             time.sleep(0.25)
             return False
 
@@ -7213,8 +11721,52 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.restart_attempt = True
                 return False
             raise RuntimeError("Schedule needs the next task, but Home was not available on the result screen.")
+        if (
+            self.current_mode == MODE_POKEGOLD_FARM
+            and not self.schedule_active
+            and int(self.total_money_earned or 0) >= int(self.current_pokegold_farm_target or 1)
+        ):
+            self.set_status("Pokegold target reached")
+            self.log(
+                f"Farm Pokegold target reached: {int(self.total_money_earned or 0):,}/"
+                f"{int(self.current_pokegold_farm_target or 1):,} Pokegold."
+            )
+            return True
+        if self.is_complete_pokedex_mode():
+            previous_phase = self.complete_pokedex_phase_label or self.complete_pokedex_phase or "current phase"
+            self.reroll_target_acquired = False
+            self.reroll_acquired_target_name = ""
+            phase_ready = self.prepare_complete_pokedex_phase(
+                reason=f"completed {previous_phase} run",
+                force_refresh=True,
+            )
+            if not phase_ready or self.complete_pokedex_phase == "done":
+                return True
+            if self.click_play_again_if_visible():
+                self.start_next_play_again_run()
+                self.log(f"Complete Pokedex continuing with {self.complete_pokedex_phase_label} phase.")
+                return False
+            raise RuntimeError("Complete Pokedex needs the next run, but Play Again was not available.")
+        if self.should_complete_current_reroll_run():
+            acquired = (self.reroll_acquired_target_name or "target").title()
+            if self.current_reroll_completion_mode == REROLL_COMPLETE_ONE_FULL_RUN:
+                self.set_status("Target found")
+                self.log(f"Completed one full run after reroll target {acquired}.")
+                return True
+            self.remove_acquired_target_from_active_list()
+            if not self.current_target_pokemon_list:
+                self.set_status("Target found")
+                self.log("Reroll chain completed: no whitelist/Dex targets remain.")
+                return True
+            if self.click_play_again_if_visible():
+                self.reroll_target_acquired = False
+                self.reroll_acquired_target_name = ""
+                self.start_next_play_again_run()
+                self.log(f"Reroll chain continuing with remaining targets: {self.current_target_pokemon}.")
+                return False
+            raise RuntimeError("Reroll chain needs the next run, but Play Again was not available.")
         if self.click_play_again_if_visible():
-            if self.current_mode == MODE_FULL_RUN:
+            if self.should_use_full_run_logic():
                 self.start_next_play_again_run()
             else:
                 self.restart_attempt = True
@@ -7263,6 +11815,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.pending_team_replace = False
         self.pending_replace_allow_any = False
         self.pending_replace_policy = "default"
+        self.pending_replace_add_clicked = False
         self.pending_passive_item_name = ""
         self.pending_passive_item_priority = None
         self.run_encounters_checked = 0
@@ -7330,7 +11883,7 @@ class PokeLikeBotGUI(ctk.CTk):
                     found = self.run_single_attempt()
                     recoveries = 0
                 except Exception as e:
-                    if not self.is_pokemon_reroll_mode() or self.stop_event.is_set():
+                    if not (self.is_pokemon_reroll_mode() or self.is_complete_pokedex_mode()) or self.stop_event.is_set():
                         raise
                     recoveries += 1
                     screen = "unknown"
@@ -7338,9 +11891,10 @@ class PokeLikeBotGUI(ctk.CTk):
                         screen = self.active_screen_id()
                     except Exception:
                         pass
-                    self.log(f"Recovering Pokemon reroll loop after error on {screen}: {e}")
+                    loop_name = "Complete Pokedex" if self.is_complete_pokedex_mode() else "Pokemon reroll"
+                    self.log(f"Recovering {loop_name} loop after error on {screen}: {e}")
                     if recoveries >= 5:
-                        raise RuntimeError(f"Pokemon reroll loop failed {recoveries} times in a row: {e}")
+                        raise RuntimeError(f"{loop_name} loop failed {recoveries} times in a row: {e}")
                     time.sleep(0.4)
                     continue
                 if found:
@@ -7350,9 +11904,14 @@ class PokeLikeBotGUI(ctk.CTk):
                     self.close_other_drivers(driver)
                     self.log(f"B{worker_id} found target. Final runtime: {self.format_runtime()}")
                     break
-                if self.is_pokemon_reroll_mode():
+                if self.is_complete_pokedex_mode():
+                    target_kind = self.complete_pokedex_phase_label or "dex"
+                    self.log(f"B{worker_id}: Complete Pokedex has no {target_kind} hit yet. Restarting...")
+                elif self.is_pokemon_reroll_mode():
                     target_kind = "shiny" if self.current_mode == MODE_SHINY_POKEMON_REROLL else "normal"
                     self.log(f"B{worker_id}: no whitelisted {target_kind} Pokemon found. Restarting...")
+                elif self.current_mode == MODE_ITEM_REROLL:
+                    self.log(f"B{worker_id}: no {self.current_item_reroll_target.title()} yet. Restarting...")
                 else:
                     self.log(f"B{worker_id}: no Shiny Charm yet. Restarting...")
 
@@ -7372,12 +11931,48 @@ class PokeLikeBotGUI(ctk.CTk):
     def run_bot(self):
         threads = []
         try:
+            if self.is_shop_reroll_mode():
+                self.run_legendary_shop_reroll()
+                return
+
             live_before_launch = len(self.get_live_drivers())
             drivers = self.launch_missing_drivers(self.browser_count)
             if not self.headless_var.get() and (not self.windows_arranged or len(drivers) != live_before_launch):
                 self.arrange_browser_windows()
                 self.windows_arranged = True
             self.log(f"Running with {len(drivers)} browser window(s).")
+            if self.is_complete_pokedex_mode() and drivers:
+                self.thread_local.use_local = True
+                self.driver = drivers[0]
+                self.wait = WebDriverWait(drivers[0], 30)
+                try:
+                    if not self.prepare_complete_pokedex_phase(reason="startup", force_refresh=True):
+                        self.stop_event.set()
+                finally:
+                    self.clear_thread_driver()
+            elif self.current_dex_target_mode != DEX_TARGET_OFF and drivers:
+                preload = getattr(self, "dex_preload_thread", None)
+                if preload is not None and preload.is_alive():
+                    self.log("Dex targets: waiting for background Pokédex preload to finish.")
+                    preload.join(timeout=35.0)
+                if (
+                    self.cached_dex_target_mode == self.current_dex_target_mode
+                    and self.cached_dex_targets.get(self.current_dex_target_mode)
+                ):
+                    dex_targets = list(self.cached_dex_targets[self.current_dex_target_mode])
+                    self.log(f"Dex targets: using {len(dex_targets)} preloaded target(s).")
+                    self.current_target_pokemon_list = self.build_current_pokemon_targets(
+                        self.current_manual_target_pokemon_list,
+                        dex_targets,
+                    )
+                    self.current_target_pokemon = ", ".join(self.current_target_pokemon_list)
+                    if self.current_target_pokemon_list:
+                        self.log(f"Active Pokemon target list: {self.current_target_pokemon}.")
+                else:
+                    self.log("Dex targets: will retrieve Pokédex data after the run starts and the page is ready.")
+
+            if self.stop_event.is_set():
+                return
 
             for worker_id, driver in enumerate(drivers, start=1):
                 thread = threading.Thread(target=self.run_bot_worker, args=(worker_id, driver), daemon=True)
