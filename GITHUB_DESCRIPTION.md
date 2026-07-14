@@ -33,7 +33,7 @@ Download the latest Windows executable from the Releases page:
 - Desktop GUI with live status, runtime, run count, item rolls checked, encounters checked, target encounters, shinies seen, Pokegold, and Pokegold per hour.
 - Full run automation for Challenge, Weekly, Daily, Battle Tower, and Story targets.
 - Task schedule for chaining daily, weekly, and repeated achievement runs.
-- Shiny Charm reroll mode.
+- Item reroll mode.
 - Shiny Pokemon reroll mode.
 - Normal Pokemon reroll mode.
 - Configurable starter and Pokemon whitelist.

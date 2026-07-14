@@ -59,7 +59,7 @@ From the latest release, download:
 - **Graphical control panel** with run status, runtime, run count, leaders / Elite Four progress, encounters checked, legendaries, shinies seen, Pokegold, and Pokegold per hour.
 - **Multiple run modes**:
   - Full run
-  - Shiny Charm reroll
+  - Item reroll
   - Shiny Pokemon reroll
   - Normal Pokemon reroll
 - **Run target selection** for Challenge Mode, Weekly Challenge, Daily Challenge, Battle Tower regions, and Story regions.

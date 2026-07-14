@@ -28,7 +28,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_NAME = "PokeLike Bot"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 UPDATE_REPO = "BIaze420/PokeLike-Bot"
 UPDATE_API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 UPDATE_ASSET_NAMES = ("PokeLike Bot.exe", "PokeLike.Bot.exe")
@@ -59,7 +59,7 @@ _PROFILE_BASE = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or D
 SELENIUM_PROFILE_PATH = os.path.join(_PROFILE_BASE, APP_NAME, "selenium-profile")
 LOG_PATH = os.path.join(DATA_DIR, "pokelike_bot.log")
 MAX_BROWSER_COUNT = 67
-SHOP_REROLL_PREWARM_COUNT = 2
+SHOP_REROLL_PREWARM_COUNT = 6
 CHROME_DEBUG_PORT_BASE = 49220
 DEFAULT_ITEM_REROLL_TARGET = "shiny hunter"
 COMPLETE_POKEDEX_ITEM_TARGET = "legend lure"
@@ -510,6 +510,9 @@ MODE_COMPLETE_POKEDEX = "Complete Pokedex"
 MODE_POKEGOLD_FARM = "Farm Pokegold"
 MODE_SHINY_SHOP_REROLL = "Shiny Pokemon shop reroll"
 MODE_LEGENDARY_SHOP_REROLL = "Legendary shop reroll"
+SHOP_REROLL_WINDOW_AREA_RATIO = 0.25
+SHOP_REROLL_MAX_WINDOW_SIZE = (900, 700)
+SHOP_REROLL_MIN_WINDOW_SIZE = (560, 420)
 RUN_TARGET_CHALLENGE = "Challenge Mode"
 RUN_TARGET_WEEKLY = "Weekly Challenge"
 RUN_TARGET_DAILY = "Daily Challenge"
@@ -672,8 +675,8 @@ class PokeLikeBotGUI(ctk.CTk):
         super().__init__()
 
         self.title(APP_NAME)
-        self.geometry("900x700")
-        self.minsize(820, 620)
+        self.geometry("900x820")
+        self.minsize(820, 780)
         self.banner_image = None
         self.window_icon = None
         self.discord_icon = None
@@ -721,6 +724,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.run_legendaries_seen = 0
         self.run_leaders_defeated = 0
         self.encounter_history = []
+        self.shop_roll_log_lines = []
         self.last_team_snapshot = []
         self.last_passive_items_snapshot = []
         self.last_legendary_signature = None
@@ -739,6 +743,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.last_catch_scan_signature = None
         self.settings = self.load_settings()
         self.status_var = ctk.StringVar(value="Idle")
+        self.shop_shiny_rate_var = ctk.StringVar(value="Legendary shiny rate: --")
         self.mode_var = ctk.StringVar(value=self.settings.get("mode", MODE_FULL_RUN))
         self.manual_start_var = ctk.BooleanVar(value=bool(self.settings.get("manual_start", False)))
         self.headless_var = ctk.BooleanVar(value=bool(self.settings.get("headless", False)))
@@ -2259,13 +2264,13 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         self.stop_button.grid(row=0, column=2, padx=(6, 0), sticky="ew")
 
-        self.refresh_dex_button = ctk.CTkButton(
+        self.force_cloud_save_button = ctk.CTkButton(
             button_box,
-            text="Refresh Dex",
-            command=self.refresh_dex_targets_from_ui,
+            text="Force Cloud Save",
+            command=self.force_cloud_save_from_ui,
             height=38,
         )
-        self.refresh_dex_button.grid(row=0, column=3, padx=(12, 0), sticky="ew")
+        self.force_cloud_save_button.grid(row=0, column=3, padx=(12, 0), sticky="ew")
 
         self.settings_button = ctk.CTkButton(
             button_box,
@@ -2290,6 +2295,24 @@ class PokeLikeBotGUI(ctk.CTk):
             height=38,
         )
         self.run_history_button.grid(row=1, column=2, columnspan=2, padx=(6, 0), pady=(8, 0), sticky="ew")
+
+        self.shop_roll_log_box = ctk.CTkFrame(controls, corner_radius=8)
+        self.shop_roll_log_box.grid(row=6, column=0, columnspan=3, padx=12, pady=(0, 14), sticky="ew")
+        self.shop_roll_log_box.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            self.shop_roll_log_box,
+            textvariable=self.shop_shiny_rate_var,
+            text_color="gray70",
+            anchor="w",
+        ).grid(row=0, column=0, padx=8, pady=(8, 0), sticky="ew")
+        self.shop_roll_log_text = ctk.CTkTextbox(
+            self.shop_roll_log_box,
+            height=72,
+            wrap="word",
+            font=ctk.CTkFont(size=12),
+        )
+        self.shop_roll_log_text.grid(row=1, column=0, padx=8, pady=8, sticky="ew")
+        self.shop_roll_log_text.configure(state="disabled")
 
     def create_stat(self, parent, label, value, row, column):
         box = ctk.CTkFrame(parent, corner_radius=10)
@@ -2344,7 +2367,7 @@ class PokeLikeBotGUI(ctk.CTk):
         if mode not in DEX_TARGET_OPTIONS or mode == DEX_TARGET_OFF:
             self.log("Dex targets: choose a Dex target mode or Full run Dex priority in Settings before refreshing.")
             return
-        self.refresh_dex_button.configure(state="disabled")
+        self.force_cloud_save_button.configure(state="disabled")
         self.dex_preload_thread = threading.Thread(
             target=self.refresh_dex_targets_worker,
             args=(drivers[0], mode),
@@ -2371,7 +2394,40 @@ class PokeLikeBotGUI(ctk.CTk):
             self.log(f"Dex targets: refresh failed ({exc}).")
         finally:
             self.clear_thread_driver()
-            self.safe_ui(lambda: self.refresh_dex_button.configure(state="normal"))
+            self.safe_ui(lambda: self.force_cloud_save_button.configure(state="normal"))
+
+    def force_cloud_save_from_ui(self):
+        if self.dex_preload_thread and self.dex_preload_thread.is_alive():
+            return
+        drivers = self.get_live_drivers()
+        if not drivers:
+            self.log("Force cloud save: open a browser first.")
+            return
+        self.force_cloud_save_button.configure(state="disabled")
+        self.dex_preload_thread = threading.Thread(
+            target=self.force_cloud_save_worker,
+            args=(drivers[0],),
+            daemon=True,
+        )
+        self.dex_preload_thread.start()
+
+    def force_cloud_save_worker(self, driver):
+        self.thread_local.use_local = True
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 20)
+        try:
+            self.log("Force cloud save: opening menu and clicking Force Upload to Cloud.")
+            if self.force_upload_save_data(driver):
+                self.close_account_modal_if_visible(driver)
+                self.restore_legendary_shop_cloud_guard(driver)
+                self.log("Force cloud save: upload completed.")
+            else:
+                self.log("Force cloud save: upload did not complete.")
+        except Exception as exc:
+            self.log(f"Force cloud save: upload failed ({exc}).")
+        finally:
+            self.clear_thread_driver()
+            self.safe_ui(lambda: self.force_cloud_save_button.configure(state="normal"))
 
     def open_settings_window(self):
         if self.settings_window is not None and self.settings_window.winfo_exists():
@@ -3613,6 +3669,26 @@ class PokeLikeBotGUI(ctk.CTk):
         except Exception:
             pass
 
+    def append_shop_roll_log(self, message):
+        self.shop_roll_log_lines.append(message)
+        self.shop_roll_log_lines = self.shop_roll_log_lines[-3:]
+
+        def update():
+            try:
+                self.shop_roll_log_text.configure(state="normal")
+                self.shop_roll_log_text.delete("1.0", "end")
+                self.shop_roll_log_text.insert("1.0", "\n".join(self.shop_roll_log_lines))
+                self.shop_roll_log_text.configure(state="disabled")
+            except Exception:
+                pass
+
+        self.safe_ui(update)
+
+    def update_shop_shiny_rate(self, rate_text):
+        if not rate_text:
+            return
+        self.safe_ui(lambda: self.shop_shiny_rate_var.set(f"Legendary shiny rate: {rate_text}"))
+
     def set_status(self, text):
         self.status_var.set(text)
         self.safe_ui(lambda: self.status_label.configure(text=text))
@@ -3996,11 +4072,27 @@ class PokeLikeBotGUI(ctk.CTk):
             for future in as_completed(futures):
                 future.result()
 
-    def prepare_legendary_shop_seed_profile(self):
+    def shop_reroll_window_rect(self):
+        try:
+            screen_w = max(800, self.winfo_screenwidth())
+            screen_h = max(600, self.winfo_screenheight() - 80)
+        except Exception:
+            screen_w, screen_h = 1920, 1000
+        scale = math.sqrt(SHOP_REROLL_WINDOW_AREA_RATIO)
+        width = min(SHOP_REROLL_MAX_WINDOW_SIZE[0], max(SHOP_REROLL_MIN_WINDOW_SIZE[0], int(screen_w * scale)))
+        height = min(SHOP_REROLL_MAX_WINDOW_SIZE[1], max(SHOP_REROLL_MIN_WINDOW_SIZE[1], int(screen_h * scale)))
+        x = max(0, screen_w - width - 20)
+        y = 20
+        return {"x": x, "y": y, "width": width, "height": height}
+
+    def prepare_legendary_shop_seed_profile(self, window_rect=None):
         base_driver = None
         try:
-            drivers = self.launch_missing_drivers(1)
-            base_driver = drivers[0]
+            base_driver = self.launch_driver(
+                worker_id=1,
+                make_active=True,
+                window_rect=window_rect,
+            )
             self.thread_local.use_local = True
             self.driver = base_driver
             self.wait = WebDriverWait(base_driver, 20)
@@ -4125,8 +4217,8 @@ class PokeLikeBotGUI(ctk.CTk):
         except Exception:
             pass
 
-    def reset_legendary_shop_attempt_profile(self, seed_path, slot=None):
-        attempt_path = self.legendary_shop_attempt_profile_path(slot=slot)
+    def reset_legendary_shop_attempt_profile(self, seed_path, slot=None, attempt_id=None):
+        attempt_path = self.legendary_shop_attempt_profile_path(slot=slot, attempt_id=attempt_id)
         self.safe_replace_profile_copy(seed_path, attempt_path)
         return attempt_path
 
@@ -4142,30 +4234,28 @@ class PokeLikeBotGUI(ctk.CTk):
             self.log(f"Legendary shop reroll: could not preserve hit Chrome profile: {exc}")
         return target_path
 
-    def prepare_shop_attempt_browser(self, seed_path, slot):
-        attempt_path = self.reset_legendary_shop_attempt_profile(seed_path, slot=slot)
-        worker_id = 100 + int(slot)
-        driver = self.launch_driver(
-            worker_id=worker_id,
-            make_active=False,
-            profile_path_override=attempt_path,
-            allow_reconnect=False,
-        )
-        self.install_legendary_shop_cloud_guard(driver)
-        self.thread_local.use_local = True
-        self.thread_local.worker_id = worker_id
-        self.driver = driver
-        self.wait = WebDriverWait(driver, 20)
+    def prepare_shop_attempt_browser(self, seed_path, slot, window_rect=None, attempt_id=None):
+        attempt_path = self.reset_legendary_shop_attempt_profile(seed_path, slot=slot, attempt_id=attempt_id)
+        worker_id = 1000 + int(attempt_id) if attempt_id is not None else 100 + int(slot)
+        driver = None
         try:
-            self.prepare_page()
+            driver = self.launch_driver(
+                worker_id=worker_id,
+                make_active=False,
+                profile_path_override=attempt_path,
+                allow_reconnect=False,
+                window_rect=window_rect,
+            )
+            self.install_legendary_shop_cloud_guard(driver)
+            self.thread_local.use_local = True
+            self.thread_local.worker_id = worker_id
+            self.driver = driver
+            self.wait = WebDriverWait(driver, 20)
+            self.prepare_page(cookie_timeout=0.25)
             self.ensure_home_screen_for_shop()
             self.enable_legendary_shop_network_guard(driver)
             if self.stop_event.is_set():
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-                self.remove_driver_reference(driver)
+                self.close_shop_attempt_driver(driver, attempt_path)
                 return None
             return {
                 "driver": driver,
@@ -4173,6 +4263,13 @@ class PokeLikeBotGUI(ctk.CTk):
                 "slot": slot,
                 "worker_id": worker_id,
             }
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: discarded failed prepared browser in slot {slot} ({exc}).")
+            if driver is not None:
+                self.close_shop_attempt_driver(driver, attempt_path)
+            else:
+                self.cleanup_shop_attempt_profile(attempt_path)
+            return None
         finally:
             self.clear_thread_driver()
 
@@ -4220,10 +4317,21 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         if not result.get("ok"):
             raise RuntimeError(f"Could not reach home screen for shop; current screen={result.get('screen') or 'unknown'}")
-        time.sleep(0.8)
+        if not result.get("alreadyHome"):
+            try:
+                WebDriverWait(self.driver, 1.2, poll_frequency=0.05).until(
+                    lambda _: self.driver.execute_script(
+                        """
+                        const activeId = document.querySelector('.screen.active')?.id || '';
+                        return !!activeId && !document.body.classList.contains('run-menu-in-run');
+                        """
+                    )
+                )
+            except Exception:
+                time.sleep(0.15)
         return True
 
-    def click_legendary_shop_buy(self):
+    def click_legendary_shop_buy(self, allow_unavailable=False):
         config = self.current_shop_egg_config()
         result = self.driver.execute_script(
             """
@@ -4283,8 +4391,14 @@ class PokeLikeBotGUI(ctk.CTk):
                     if (buy.disabled || buy.getAttribute('aria-disabled') === 'true') {
                         return {clicked: false, reason: `${eggType} buy button disabled`, text};
                     }
+                    const eggBlock = buy.closest('.mart-egg') || buy.parentElement;
+                    const desc = eggBlock ? eggBlock.querySelector('.mart-egg-desc') : null;
+                    const descText = desc ? (desc.innerText || desc.textContent || '') : '';
+                    const rateMatch = descText.match(/([0-9]+(?:[.,][0-9]+)?\\s*%)(?:\\s+chance\\s+to\\s+be\\s+shiny)?/i)
+                        || descText.match(/now\\s+([0-9]+(?:[.,][0-9]+)?\\s*%)/i);
+                    const shinyRate = rateMatch ? rateMatch[1].replace(',', '.') : '';
                     click(buy);
-                    return {clicked: true, text, price};
+                    return {clicked: true, text, price, shinyRate, descText};
                 }
             }
             return {clicked: false, reason: `${eggType} buy button not found`};
@@ -4293,7 +4407,12 @@ class PokeLikeBotGUI(ctk.CTk):
             config["expected_price"],
         )
         if not result.get("clicked"):
+            if allow_unavailable:
+                self.log(f"{config['mode_label']}: cannot buy more {config['label']} ({result.get('reason') or 'unavailable'}).")
+                return False
             raise RuntimeError(f"Could not buy {config['label']}: {result.get('reason') or 'unknown'}")
+        if result.get("shinyRate"):
+            self.update_shop_shiny_rate(result.get("shinyRate"))
         self.log(f"{config['mode_label']}: clicked buy ({result.get('text') or config['label']}).")
         time.sleep(0.12)
         return True
@@ -4566,17 +4685,24 @@ class PokeLikeBotGUI(ctk.CTk):
         try:
             result = target_driver.execute_script(
                 """
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const sprite = [...document.querySelectorAll(
+                    'img.egg-reveal-sprite.egg-revealed, .egg-reveal-sprite.egg-revealed, #egg-overlay img'
+                )].find(visible);
                 const overlay = document.querySelector('#egg-overlay');
-                if (!overlay) return {clicked: false, reason: 'no overlay'};
-                const rect = overlay.getBoundingClientRect();
-                const style = getComputedStyle(overlay);
-                const visible = rect.width > 0 && rect.height > 0
-                    && style.display !== 'none'
-                    && style.visibility !== 'hidden';
-                if (!visible) return {clicked: false, reason: 'overlay hidden'};
-                const x = Math.floor(window.innerWidth / 2);
-                const y = Math.floor(window.innerHeight / 2);
-                const target = document.elementFromPoint(x, y) || overlay;
+                if (!sprite && !visible(overlay)) return {clicked: false, reason: 'no egg reveal'};
+                const target = sprite || overlay;
+                target.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = target.getBoundingClientRect();
+                const x = Math.floor(rect.left + rect.width / 2);
+                const y = Math.floor(rect.top + rect.height / 2);
                 for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'click']) {
                     target.dispatchEvent(new MouseEvent(type, {
                         bubbles: true,
@@ -4588,26 +4714,20 @@ class PokeLikeBotGUI(ctk.CTk):
                         button: 0,
                     }));
                 }
-                return {clicked: true};
+                return {clicked: true, target: sprite ? 'egg reveal sprite' : 'egg overlay'};
                 """
             )
         except Exception as exc:
             self.log(f"Legendary shop reroll: could not dismiss egg result overlay ({exc}).")
             return False
         if isinstance(result, dict) and result.get("clicked"):
-            self.log("Legendary shop reroll: dismissed egg result overlay before force upload.")
+            self.log(f"Legendary shop reroll: clicked {result.get('target') or 'egg reveal'} before force upload.")
             time.sleep(0.4)
             return True
         return False
 
-    def force_upload_save_data(self, driver=None):
+    def dismiss_shop_menu_before_force_upload(self, driver=None):
         target_driver = driver or self.driver
-        self.disable_legendary_shop_network_guard(target_driver)
-        try:
-            target_driver.execute_script("window.__pokelikeBotAllowCloudUpload = true;")
-        except Exception:
-            pass
-        result = None
         try:
             result = target_driver.execute_script(
                 """
@@ -4619,31 +4739,248 @@ class PokeLikeBotGUI(ctk.CTk):
                         && style.display !== 'none'
                         && style.visibility !== 'hidden';
                 };
+                const shop = [...document.querySelectorAll(
+                    '#shop-modal, #mart-modal, .game-modal--menu, [id*="mart" i], [id*="shop" i], '
+                    + '[class*="mart" i], [class*="shop" i], [role="dialog"], .modal'
+                )].find(visible);
+                if (!shop) return {clicked: false, reason: 'no visible shop dialog'};
+
+                const close = [...shop.querySelectorAll('button.btn-icon-close, button[aria-label="Close"], button')]
+                    .filter(visible)
+                    .find(btn => {
+                        const label = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+                        const cls = (btn.className || '').toString().toLowerCase();
+                        return label === 'close' || cls.includes('btn-icon-close') || !!btn.querySelector('.btn-close-glyph');
+                    });
+                if (!close) return {clicked: false, reason: 'shop close button not visible'};
+
+                close.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = close.getBoundingClientRect();
+                const x = Math.floor(rect.left + rect.width / 2);
+                const y = Math.floor(rect.top + rect.height / 2);
+                for (const type of ['pointerdown', 'mousedown', 'mouseup', 'pointerup', 'click']) {
+                    close.dispatchEvent(new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: x,
+                        clientY: y,
+                        screenX: x,
+                        screenY: y,
+                        button: 0,
+                    }));
+                }
+                return {
+                    clicked: true,
+                    targetText: close.getAttribute('aria-label') || close.title || (close.innerText || close.textContent || '').trim().slice(0, 80)
+                };
+                """
+            )
+        except Exception as exc:
+            self.log(f"Legendary shop reroll: could not dismiss shop menu before force upload ({exc}).")
+            return False
+        if isinstance(result, dict) and result.get("clicked"):
+            self.log("Legendary shop reroll: dismissed shop menu before force upload.")
+            try:
+                WebDriverWait(target_driver, 1.5, poll_frequency=0.05).until(
+                    lambda _: target_driver.execute_script(
+                        """
+                        const shop = document.querySelector('#shop-modal, #mart-modal, .game-modal--menu');
+                        if (shop) {
+                            const shopRect = shop.getBoundingClientRect();
+                            const shopStyle = getComputedStyle(shop);
+                            if (shopRect.width > 0 && shopRect.height > 0
+                                && shopStyle.display !== 'none'
+                                && shopStyle.visibility !== 'hidden') {
+                                return false;
+                            }
+                        }
+                        const toggle = document.querySelector('#run-menu-toggle, .run-menu-toggle')
+                            || [...document.querySelectorAll('button, [role="button"]')].find(el => {
+                                const menu = (el.dataset?.menu || '').toLowerCase();
+                                const label = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                                const onclick = String(el.getAttribute('onclick') || '').toLowerCase();
+                                return menu === 'menu' || label === 'open menu' || text === 'menu' || onclick.includes('openappmenumodal');
+                            });
+                        if (!toggle) return false;
+                        const rect = toggle.getBoundingClientRect();
+                        const style = getComputedStyle(toggle);
+                        return rect.width > 0 && rect.height > 0
+                            && style.display !== 'none'
+                            && style.visibility !== 'hidden';
+                        """
+                    )
+                )
+                return True
+            except Exception:
+                try:
+                    state = target_driver.execute_script(
+                        """
+                        const visible = (el) => {
+                            if (!el) return false;
+                            const rect = el.getBoundingClientRect();
+                            const style = getComputedStyle(el);
+                            return rect.width > 0 && rect.height > 0
+                                && style.display !== 'none'
+                                && style.visibility !== 'hidden';
+                        };
+                        const shop = document.querySelector('#shop-modal, #mart-modal, .game-modal--menu');
+                        const toggle = document.querySelector('#run-menu-toggle, .run-menu-toggle')
+                            || [...document.querySelectorAll('button, [role="button"]')].find(el => {
+                                const menu = (el.dataset?.menu || '').toLowerCase();
+                                const label = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                                const onclick = String(el.getAttribute('onclick') || '').toLowerCase();
+                                return menu === 'menu' || label === 'open menu' || text === 'menu' || onclick.includes('openappmenumodal');
+                            });
+                        return {
+                            shopVisible: visible(shop),
+                            toggleVisible: visible(toggle),
+                            activeScreen: document.querySelector('.screen.active')?.id || '',
+                            bodyClass: document.body.className || '',
+                            url: location.href,
+                        };
+                        """
+                    )
+                except Exception:
+                    state = {}
+                self.log(
+                    "Legendary shop reroll: shop close clicked, but run menu toggle was not ready "
+                    f"(shopVisible={state.get('shopVisible')}, toggleVisible={state.get('toggleVisible')}, "
+                    f"screen={state.get('activeScreen') or 'unknown'})."
+                )
+                return False
+        return False
+
+    def force_upload_save_data(self, driver=None):
+        target_driver = driver or self.driver
+        self.disable_legendary_shop_network_guard(target_driver)
+        try:
+            target_driver.execute_script("window.__pokelikeBotAllowCloudUpload = true;")
+        except Exception:
+            pass
+        for _attempt in range(3):
+            if self.dismiss_shop_menu_before_force_upload(target_driver):
+                break
+            try:
+                ready = target_driver.execute_script(
+                    """
+                    const visible = (el) => {
+                        if (!el) return false;
+                        const rect = el.getBoundingClientRect();
+                        const style = getComputedStyle(el);
+                        return rect.width > 0 && rect.height > 0
+                            && style.display !== 'none'
+                            && style.visibility !== 'hidden';
+                    };
+                    const shop = document.querySelector('#shop-modal, #mart-modal, .game-modal--menu');
+                    const toggle = document.querySelector('#run-menu-toggle, .run-menu-toggle')
+                        || [...document.querySelectorAll('button, [role="button"]')].find(el => {
+                            const menu = (el.dataset?.menu || '').toLowerCase();
+                            const label = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                            const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                            const onclick = String(el.getAttribute('onclick') || '').toLowerCase();
+                            return menu === 'menu' || label === 'open menu' || text === 'menu' || onclick.includes('openappmenumodal');
+                        });
+                    return !visible(shop) && visible(toggle);
+                    """
+                )
+                if ready:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.4)
+        result = None
+        try:
+            result = target_driver.execute_async_script(
+                """
+                const done = arguments[arguments.length - 1];
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
                 const click = (el) => {
+                    if (!el) return false;
                     el.scrollIntoView({block: 'center', inline: 'center'});
                     el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
                     el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
                     el.click();
                     el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
                     el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                    return true;
                 };
-                const account = document.querySelector('#btn-cloud-sync')
+                const findAccount = () => document.querySelector('#btn-cloud-sync')
                     || [...document.querySelectorAll('button, [role="button"]')].filter(visible).find(el => {
                         const text = `${el.innerText || el.textContent || ''} ${el.getAttribute('aria-label') || ''} ${el.title || ''}`.toLowerCase();
                         const menu = (el.dataset?.menu || '').toLowerCase();
                         const id = (el.id || '').toLowerCase();
                         return menu === 'account' || id.includes('cloud') || text.includes('cloud save');
                     });
-                if (!account || !visible(account)) return {clicked: false, step: 'account'};
-                click(account);
-                return {clicked: true, step: 'account'};
+                const findMenuOpener = () => document.querySelector('#run-menu-toggle, .run-menu-toggle')
+                    || [...document.querySelectorAll('button, [role="button"]')].filter(visible).find(el => {
+                        const menu = (el.dataset?.menu || '').toLowerCase();
+                        const label = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                        const onclick = String(el.getAttribute('onclick') || '').toLowerCase();
+                        return menu === 'menu' || label === 'open menu' || text === 'menu' || onclick.includes('openappmenumodal');
+                    });
+                const started = Date.now();
+                let menuClicked = false;
+                const waitAndClick = () => {
+                    const account = findAccount();
+                    if (visible(account)) {
+                        click(account);
+                        done({
+                            clicked: true,
+                            step: 'account',
+                            text: account.innerText || account.textContent || account.title || account.getAttribute('aria-label') || ''
+                        });
+                        return;
+                    }
+                    const toggle = findMenuOpener();
+                    if (!menuClicked && visible(toggle)) {
+                        click(toggle);
+                        menuClicked = true;
+                        setTimeout(waitAndClick, 120);
+                        return;
+                    }
+                    if (Date.now() - started >= 7000) {
+                        done({
+                            clicked: false,
+                            step: menuClicked ? 'account' : 'menu-toggle',
+                            reason: menuClicked
+                                ? 'cloud sync button not visible after opening run menu'
+                                : 'run menu toggle not visible',
+                            activeScreen: document.querySelector('.screen.active')?.id || '',
+                            bodyClass: document.body.className || '',
+                            shopVisible: visible(document.querySelector('#shop-modal, #mart-modal, .game-modal--menu')),
+                        });
+                        return;
+                    }
+                    setTimeout(waitAndClick, 80);
+                };
+                waitAndClick();
                 """
             )
         except Exception as exc:
             self.log(f"Legendary shop reroll: could not open account menu for force upload ({exc}).")
             result = {}
         if not isinstance(result, dict) or not result.get("clicked"):
-            self.log("Legendary shop reroll: target found, but account/cloud menu was not found.")
+            reason = result.get("reason") if isinstance(result, dict) else ""
+            step = result.get("step") if isinstance(result, dict) else ""
+            state_bits = []
+            if isinstance(result, dict):
+                if result.get("activeScreen"):
+                    state_bits.append(f"screen={result.get('activeScreen')}")
+                if result.get("shopVisible") is not None:
+                    state_bits.append(f"shopVisible={result.get('shopVisible')}")
+            state_detail = f"; {', '.join(state_bits)}" if state_bits else ""
+            detail = f" ({step}: {reason}{state_detail})" if step or reason or state_detail else ""
+            self.log(f"Legendary shop reroll: target found, but account/cloud menu was not found{detail}.")
             return False
         clicked_upload = False
         upload_text = ""
@@ -4739,7 +5076,83 @@ class PokeLikeBotGUI(ctk.CTk):
             time.sleep(0.4)
         return bool(result)
 
-    def run_legendary_shop_attempt(self, seed_path, attempt_number, prepared=None):
+    def restore_legendary_shop_cloud_guard(self, driver=None):
+        target_driver = driver or self.driver
+        try:
+            target_driver.execute_script("window.__pokelikeBotAllowCloudUpload = false;")
+        except Exception:
+            pass
+        self.enable_legendary_shop_network_guard(target_driver)
+
+    def record_shop_reroll_result(self, config, attempt_number, result):
+        if result.get("found"):
+            with self.stats_lock:
+                self.total_encounters_checked += 1
+                if result.get("shiny"):
+                    self.total_shinies_seen += 1
+                if result.get("hit"):
+                    self.target_encounters_seen += 1
+            self.update_stats_labels()
+            label = "shiny" if result.get("shiny") else "normal"
+            evidence = (
+                f" ({result.get('shinyEvidence')})"
+                if result.get("shiny") and result.get("shinyEvidence")
+                else ""
+            )
+            message = (
+                f"{config['mode_label']} attempt #{attempt_number}: rolled {label}{evidence} "
+                f"{result.get('name') or 'Pokemon'}."
+            )
+            self.log(message)
+            self.append_shop_roll_log(message)
+        else:
+            self.log(f"{config['mode_label']} attempt #{attempt_number}: could not identify the purchased Pokemon.")
+
+    def force_upload_shop_hit(self, driver):
+        self.dismiss_shop_egg_result_overlay(driver)
+        uploaded = self.force_upload_save_data(driver)
+        if not uploaded:
+            self.log("Legendary shop reroll: target found, but cloud force upload did not complete.")
+            self.restore_legendary_shop_cloud_guard(driver)
+            return False
+        self.close_account_modal_if_visible(driver)
+        self.restore_legendary_shop_cloud_guard(driver)
+        return True
+
+    def spend_remaining_shop_gold_after_hit(self, driver, starting_attempt_number):
+        config = self.current_shop_egg_config()
+        attempt_number = starting_attempt_number
+        self.log(f"{config['mode_label']}: target uploaded; continuing in the winning browser until gold is empty.")
+        while not self.stop_event.is_set():
+            before_party = self.legendary_shop_party_summary()
+            if not self.click_legendary_shop_buy(allow_unavailable=True):
+                self.log(f"{config['mode_label']}: no more affordable {config['label']} buys; stopping shop reroll.")
+                return attempt_number
+            attempt_number += 1
+            with self.stats_lock:
+                self.run_count = attempt_number
+            self.update_stats_labels()
+            result = self.legendary_shop_result_after_buy(before_party)
+            self.record_shop_reroll_result(config, attempt_number, result)
+            if result.get("hit"):
+                if self.force_upload_shop_hit(driver):
+                    self.log(f"{config['mode_label']}: uploaded additional target {result.get('name') or 'Pokemon'}.")
+                else:
+                    self.stop_event.set()
+                    self.set_status("Upload failed")
+                    return attempt_number
+            else:
+                self.dismiss_shop_egg_result_overlay(driver)
+        return attempt_number
+
+    def run_legendary_shop_attempt(
+        self,
+        seed_path,
+        attempt_number,
+        prepared=None,
+        window_rect=None,
+        close_miss_driver=True,
+    ):
         config = self.current_shop_egg_config()
         attempt_path = None
         driver = None
@@ -4749,13 +5162,14 @@ class PokeLikeBotGUI(ctk.CTk):
                 attempt_path = prepared["attempt_path"]
                 worker_id = prepared.get("worker_id", 1)
             else:
-                attempt_path = self.reset_legendary_shop_attempt_profile(seed_path)
+                attempt_path = self.reset_legendary_shop_attempt_profile(seed_path, attempt_id=attempt_number)
                 worker_id = 1
                 driver = self.launch_driver(
                     worker_id=worker_id,
                     make_active=True,
                     profile_path_override=attempt_path,
                     allow_reconnect=False,
+                    window_rect=window_rect,
                 )
                 self.install_legendary_shop_cloud_guard(driver)
             self.thread_local.use_local = True
@@ -4763,35 +5177,15 @@ class PokeLikeBotGUI(ctk.CTk):
             self.driver = driver
             self.wait = WebDriverWait(driver, 20)
             if not prepared:
-                self.prepare_page()
+                self.prepare_page(cookie_timeout=0.25)
                 self.ensure_home_screen_for_shop()
                 self.enable_legendary_shop_network_guard(driver)
             before_party = self.legendary_shop_party_summary()
             self.click_legendary_shop_buy()
             result = self.legendary_shop_result_after_buy(before_party)
-            if result.get("found"):
-                with self.stats_lock:
-                    self.total_encounters_checked += 1
-                    if result.get("shiny"):
-                        self.total_shinies_seen += 1
-                    if result.get("hit"):
-                        self.target_encounters_seen += 1
-                self.update_stats_labels()
-                label = "shiny" if result.get("shiny") else "normal"
-                evidence = (
-                    f" ({result.get('shinyEvidence')})"
-                    if result.get("shiny") and result.get("shinyEvidence")
-                    else ""
-                )
-                self.log(
-                    f"{config['mode_label']} attempt #{attempt_number}: rolled {label}{evidence} "
-                    f"{result.get('name') or 'Pokemon'}."
-                )
-            else:
-                self.log(f"{config['mode_label']} attempt #{attempt_number}: could not identify the purchased Pokemon.")
+            self.record_shop_reroll_result(config, attempt_number, result)
             if result.get("hit"):
                 self.set_status("Target found")
-                self.stop_event.set()
                 self.winning_driver = driver
                 with self.drivers_lock:
                     self.worker_drivers = [driver]
@@ -4799,21 +5193,56 @@ class PokeLikeBotGUI(ctk.CTk):
                 self._wait = WebDriverWait(driver, 30)
                 self.driver = driver
                 self.wait = WebDriverWait(driver, 30)
-                self.dismiss_shop_egg_result_overlay(driver)
-                if not self.force_upload_save_data(driver):
-                    self.log("Legendary shop reroll: target found, but cloud force upload did not complete.")
-                self.close_account_modal_if_visible(driver)
-                self.log("Legendary shop reroll: keeping the winning Chrome profile open; skipping live profile backup copy.")
+                if not self.force_upload_shop_hit(driver):
+                    self.stop_event.set()
+                    self.set_status("Upload failed")
+                    self.log("Legendary shop reroll: stopped on winning browser because target upload failed.")
+                    return True
+                final_attempt = self.spend_remaining_shop_gold_after_hit(driver, attempt_number)
+                with self.stats_lock:
+                    self.run_count = final_attempt
+                self.update_stats_labels()
+                self.stop_event.set()
+                self.set_status("Shop gold spent")
+                self.log("Legendary shop reroll: keeping the winning Chrome profile open after spending remaining gold.")
                 return True
             return False
         finally:
             self.clear_thread_driver()
-            if driver is not None and self.winning_driver is not driver:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-                self.remove_driver_reference(driver)
+            if close_miss_driver and driver is not None and self.winning_driver is not driver:
+                self.close_shop_attempt_driver(driver, attempt_path)
+
+    def cleanup_shop_attempt_profile(self, attempt_path):
+        if not attempt_path:
+            return
+        try:
+            marker = f"{SELENIUM_PROFILE_PATH}-shop-attempt"
+            if os.path.abspath(attempt_path).startswith(os.path.abspath(marker)):
+                shutil.rmtree(attempt_path, ignore_errors=True)
+        except Exception:
+            pass
+
+    def close_shop_attempt_driver(self, driver, attempt_path=None):
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        self.remove_driver_reference(driver)
+        self.cleanup_shop_attempt_profile(attempt_path)
+
+    def close_shop_attempt_driver_async(self, driver, attempt_path=None):
+        if driver is None:
+            self.cleanup_shop_attempt_profile(attempt_path)
+            return
+        try:
+            self.remove_driver_reference(driver)
+        except Exception:
+            pass
+        threading.Thread(
+            target=self.close_shop_attempt_driver,
+            args=(driver, attempt_path),
+            daemon=True,
+        ).start()
 
     def run_legendary_shop_reroll(self):
         config = self.current_shop_egg_config()
@@ -4829,15 +5258,36 @@ class PokeLikeBotGUI(ctk.CTk):
             self.log(f"{config['mode_label']} ignore list: " + ", ".join(name.title() for name in ignored))
         self.browser_count = 1
         self.browser_count_var.set("1")
-        seed_path = self.prepare_legendary_shop_seed_profile()
+        window_rect = self.shop_reroll_window_rect()
+        self.log(
+            f"{config['mode_label']}: using compact Chrome window "
+            f"{window_rect['width']}x{window_rect['height']} for shop reroll."
+        )
+        seed_path = self.prepare_legendary_shop_seed_profile(window_rect=window_rect)
         attempt_number = 0
-        prewarm_count = max(1, min(SHOP_REROLL_PREWARM_COUNT, 4))
-        self.log(f"{config['mode_label']}: prewarming {prewarm_count} isolated attempt browser(s).")
+        prewarm_count = max(1, min(SHOP_REROLL_PREWARM_COUNT, 8))
+        self.log(f"{config['mode_label']}: keeping {prewarm_count} isolated attempt browser(s) loaded in the background.")
         with ThreadPoolExecutor(max_workers=prewarm_count) as executor:
-            futures = {
-                executor.submit(self.prepare_shop_attempt_browser, seed_path, slot): slot
-                for slot in range(1, prewarm_count + 1)
-            }
+            futures = {}
+            next_prepare_id = 1
+
+            def queue_attempt_browser(slot):
+                nonlocal next_prepare_id
+                attempt_id = next_prepare_id
+                next_prepare_id += 1
+                futures[
+                    executor.submit(
+                        self.prepare_shop_attempt_browser,
+                        seed_path,
+                        slot,
+                        window_rect,
+                        attempt_id,
+                    )
+                ] = slot
+
+            for slot in range(1, prewarm_count + 1):
+                queue_attempt_browser(slot)
+
             while not self.stop_event.is_set():
                 done = [future for future in futures if future.done()]
                 if not done:
@@ -4847,14 +5297,40 @@ class PokeLikeBotGUI(ctk.CTk):
                     continue
                 future = done[0]
                 slot = futures.pop(future)
-                prepared = future.result()
+                try:
+                    prepared = future.result()
+                except Exception as exc:
+                    self.log(f"{config['mode_label']}: prepared browser slot {slot} failed ({exc}); queuing a replacement.")
+                    if not self.stop_event.is_set():
+                        queue_attempt_browser(slot)
+                    continue
                 if not prepared:
+                    if not self.stop_event.is_set():
+                        queue_attempt_browser(slot)
                     continue
                 attempt_number += 1
                 with self.stats_lock:
                     self.run_count = attempt_number
                 self.update_stats_labels()
-                if self.run_legendary_shop_attempt(seed_path, attempt_number, prepared=prepared):
+                hit = False
+                try:
+                    hit = self.run_legendary_shop_attempt(
+                        seed_path,
+                        attempt_number,
+                        prepared=prepared,
+                        window_rect=window_rect,
+                        close_miss_driver=False,
+                    )
+                except Exception as exc:
+                    self.close_shop_attempt_driver_async(
+                        prepared.get("driver") if isinstance(prepared, dict) else None,
+                        prepared.get("attempt_path") if isinstance(prepared, dict) else None,
+                    )
+                    self.log(f"{config['mode_label']} attempt #{attempt_number}: browser failed ({exc}); closing it and continuing.")
+                    if not self.stop_event.is_set():
+                        queue_attempt_browser(slot)
+                    continue
+                if hit:
                     self.stop_event.set()
                     for pending_future in list(futures):
                         if pending_future.cancel():
@@ -4865,17 +5341,14 @@ class PokeLikeBotGUI(ctk.CTk):
                             spare = pending_future.result()
                             spare_driver = spare.get("driver") if isinstance(spare, dict) else None
                             if spare_driver is not None and spare_driver is not self.winning_driver:
-                                try:
-                                    spare_driver.quit()
-                                except Exception:
-                                    pass
-                                self.remove_driver_reference(spare_driver)
+                                self.close_shop_attempt_driver_async(spare_driver, spare.get("attempt_path"))
                         except Exception:
                             pass
                     return
-                self.log(f"{config['mode_label']}: miss; closed attempt browser and queued a clean replacement.")
                 if not self.stop_event.is_set():
-                    futures[executor.submit(self.prepare_shop_attempt_browser, seed_path, slot)] = slot
+                    queue_attempt_browser(slot)
+                self.close_shop_attempt_driver_async(prepared.get("driver"), prepared.get("attempt_path"))
+                self.log(f"{config['mode_label']}: miss; queued the next clean browser and closing the spent one in the background.")
 
     def preload_dex_targets(self, driver, target_mode):
         self.thread_local.use_local = True
@@ -6300,6 +6773,7 @@ class PokeLikeBotGUI(ctk.CTk):
 
         self.start_button.configure(state="disabled")
         self.open_browser_button.configure(state="disabled")
+        self.force_cloud_save_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.mode_selector.configure(state="disabled")
         self.run_target_selector.configure(state="disabled")
@@ -6332,6 +6806,7 @@ class PokeLikeBotGUI(ctk.CTk):
     def finish_ui(self):
         self.safe_ui(lambda: self.runtime_label.configure(text=self.format_runtime()))
         self.safe_ui(lambda: self.open_browser_button.configure(state="normal"))
+        self.safe_ui(lambda: self.force_cloud_save_button.configure(state="normal"))
         self.safe_ui(lambda: self.start_button.configure(state="normal"))
         self.safe_ui(lambda: self.stop_button.configure(state="disabled"))
         self.safe_ui(lambda: self.mode_selector.configure(state="normal"))
@@ -6426,8 +6901,11 @@ class PokeLikeBotGUI(ctk.CTk):
     def legendary_shop_seed_profile_path(self):
         return f"{SELENIUM_PROFILE_PATH}-shop-seed"
 
-    def legendary_shop_attempt_profile_path(self, slot=None):
-        suffix = "" if slot is None else f"-{int(slot)}"
+    def legendary_shop_attempt_profile_path(self, slot=None, attempt_id=None):
+        if attempt_id is not None:
+            suffix = f"-{int(slot or 1)}-{int(attempt_id)}"
+        else:
+            suffix = "" if slot is None else f"-{int(slot)}"
         return f"{SELENIUM_PROFILE_PATH}-shop-attempt{suffix}"
 
     def remove_driver_reference(self, driver):
@@ -6549,7 +7027,14 @@ class PokeLikeBotGUI(ctk.CTk):
         self.log(f"Reused existing Chrome window for browser {worker_id}.")
         return driver
 
-    def launch_driver(self, worker_id=1, make_active=True, profile_path_override=None, allow_reconnect=True):
+    def launch_driver(
+        self,
+        worker_id=1,
+        make_active=True,
+        profile_path_override=None,
+        allow_reconnect=True,
+        window_rect=None,
+    ):
         if profile_path_override:
             profile_path = profile_path_override
         else:
@@ -6565,6 +7050,7 @@ class PokeLikeBotGUI(ctk.CTk):
         if allow_reconnect:
             existing_driver = self.try_reconnect_driver(worker_id, make_active=make_active)
             if existing_driver:
+                self.apply_browser_window_rect(existing_driver, window_rect)
                 return existing_driver
 
         def build_options(safe=False, active_profile_path=None):
@@ -6593,7 +7079,11 @@ class PokeLikeBotGUI(ctk.CTk):
                 # next app start can reuse this window.
                 o.add_argument(f"--remote-debugging-port={self.chrome_debug_port_for_worker(worker_id)}")
                 if not headless:
-                    o.add_argument("--start-maximized")
+                    if window_rect:
+                        o.add_argument(f"--window-size={int(window_rect['width'])},{int(window_rect['height'])}")
+                        o.add_argument(f"--window-position={int(window_rect['x'])},{int(window_rect['y'])}")
+                    else:
+                        o.add_argument("--start-maximized")
                 return o
             # Enhancements: keep the game's loop running while minimized/occluded,
             # and use a stable DevTools port so a restarted bot can reconnect.
@@ -6603,7 +7093,11 @@ class PokeLikeBotGUI(ctk.CTk):
             o.add_argument("--disable-renderer-backgrounding")
             o.add_argument(f"--remote-debugging-port={self.chrome_debug_port_for_worker(worker_id)}")
             if not headless:
-                o.add_argument("--start-maximized")
+                if window_rect:
+                    o.add_argument(f"--window-size={int(window_rect['width'])},{int(window_rect['height'])}")
+                    o.add_argument(f"--window-position={int(window_rect['x'])},{int(window_rect['y'])}")
+                else:
+                    o.add_argument("--start-maximized")
             return o
 
         def start_chrome(opts):
@@ -6667,6 +7161,7 @@ class PokeLikeBotGUI(ctk.CTk):
                             f"with minimal flags and a clean recovery profile. Original error: {first_exc}; "
                             f"minimal-flags error: {safe_exc}; recovery retry error: {recovery_exc}"
                         ) from recovery_exc
+        self.apply_browser_window_rect(driver, window_rect)
         self.mark_bot_browser_window(driver, worker_id)
         wait = WebDriverWait(driver, 30)
         if make_active:
@@ -6723,6 +7218,19 @@ class PokeLikeBotGUI(ctk.CTk):
         self.thread_local.driver = None
         self.thread_local.wait = None
         self.thread_local.use_local = False
+
+    def apply_browser_window_rect(self, driver, window_rect):
+        if not window_rect:
+            return
+        try:
+            driver.set_window_rect(
+                x=int(window_rect.get("x", 0)),
+                y=int(window_rect.get("y", 0)),
+                width=max(120, int(window_rect.get("width", 900))),
+                height=max(120, int(window_rect.get("height", 700))),
+            )
+        except Exception:
+            pass
 
     def arrange_browser_windows(self, screen_w=None, screen_h=None):
         drivers = self.get_live_drivers()[: self.browser_count or self.parse_browser_count()]
@@ -7420,12 +7928,12 @@ class PokeLikeBotGUI(ctk.CTk):
             return True
         return False
 
-    def prepare_page(self):
+    def prepare_page(self, cookie_timeout=4):
         self.driver.get(POKELIKE_URL)
         self.wait.until(lambda _: self.driver.execute_script("return document.readyState") in ["interactive", "complete"])
 
         try:
-            self.js_click(".qc-cmp2-summary-buttons button:last-child", timeout=4)
+            self.js_click(".qc-cmp2-summary-buttons button:last-child", timeout=cookie_timeout)
             self.log("Cookie prompt accepted.")
         except Exception:
             pass
@@ -9881,11 +10389,28 @@ class PokeLikeBotGUI(ctk.CTk):
                 fallback = true;
             }
             if (!card) {
-                // Nothing pickable (all offered items are unrecognized/ignored):
-                // skip the screen rather than picking an unknown item.
+                // Nothing preferred is pickable (all offers are unrecognized/ignored):
+                // skip when possible; otherwise pick the first offer so full runs continue.
                 const skip = [...document.querySelectorAll('#passive-choices .choice-skip-cell, .choice-skip-btn, #passive-choices button')]
                     .find(el => isVisible(el) && /skip/i.test(el.innerText || el.textContent || ''));
                 if (skip) { clickCard(skip); return {clicked: true, skipped: true, name: 'skip', names, ignoredNames, unrecognizedNames, itemDetails}; }
+                const lastResort = visibleCards[0];
+                if (lastResort) {
+                    const selectedName = nameFor(lastResort) || (lastResort.innerText || '').trim();
+                    clickCard(lastResort);
+                    return {
+                        clicked: true,
+                        target: false,
+                        fallback: true,
+                        lastResort: true,
+                        priority: null,
+                        name: selectedName.replace(/\\s+/g, ' ').slice(0, 80),
+                        names,
+                        ignoredNames,
+                        unrecognizedNames,
+                        itemDetails
+                    };
+                }
                 return {clicked: false, name: '', names, ignoredNames, unrecognizedNames, itemDetails};
             }
             const selectedName = nameFor(card) || (card.innerText || '').trim();
@@ -9928,10 +10453,16 @@ class PokeLikeBotGUI(ctk.CTk):
         if not result.get("clicked"):
             if target_only:
                 return False
-            raise RuntimeError("Could not click a passive choice after applying the never-pick list.")
+            self.log("Passive choice: no clickable item found yet; waiting for the screen to finish loading.")
+            return False
         if result.get("skipped"):
             # Everything offered was unrecognized/ignored — skipped the screen.
             return False
+        if result.get("lastResort"):
+            self.log(
+                "Passive choice: all offers were ignored or unrecognized; "
+                f"picked {result.get('name') or 'first visible item'} to continue the run."
+            )
         # A passive item is offered once per map (start of each Tower/Challenge
         # map), so a successful pick marks entering a new map. Used to re-enable
         # catching from map 3 onward (see prioritize_party_fill in pick_map_node).
