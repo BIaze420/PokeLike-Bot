@@ -47,9 +47,10 @@ From the latest release, download:
 ## Why Use It?
 
 - Automates full runs, shiny rerolls, Pokemon whitelist rerolls, and item choices.
+- Includes shiny and legendary shop reroll modes with isolated failed attempts and cloud upload only after a target hit.
 - Supports Story, Battle Tower, Challenge, Weekly, and Daily targets.
-- Includes a task schedule for chaining daily, weekly, and repeated achievement runs.
-- Tracks run stats including leaders / Elite Four progress, encounters, legendaries, shinies seen, Pokegold, and Pokegold per hour.
+- Includes a task schedule for chaining daily, weekly, shop-budget, repeated achievement, and forever farming tasks.
+- Tracks run stats including leaders / Elite Four progress, encounters, legendaries, shinies seen, last shiny name, shop targets obtained, Pokegold, and Pokegold per hour.
 - Saves run history with duration, earned Pokegold, score, passives, and team snapshots.
 - Can open and tile multiple Chrome windows for faster parallel sessions.
 - Uses editable priority lists for items, Pokemon choices, and reward handling.
@@ -62,8 +63,10 @@ From the latest release, download:
   - Item reroll
   - Shiny Pokemon reroll
   - Normal Pokemon reroll
+  - Shiny Pokemon shop reroll
+  - Legendary shop reroll
 - **Run target selection** for Challenge Mode, Weekly Challenge, Daily Challenge, Battle Tower regions, and Story regions.
-- **Task schedule** for running a sequence of goals, such as Daily Challenge until one win, Weekly Challenge until one win, then Kanto Classic 100 times for achievements.
+- **Task schedule** for running a sequence of goals, such as Daily Challenge until one win, Legendary shop reroll until there is not enough gold for another egg, then Challenge Mode with Darkrai forever.
 - **Run history** for the last runs, including runtime, earned Pokegold, score, team snapshot, passive items, legendary encounters, and progress stats.
 - **Starter selection** with a configurable starter field.
 - **Pokemon whitelist** used by Pokemon reroll modes and full-run catch priority.
@@ -83,7 +86,9 @@ From the latest release, download:
   - Prioritizes Pokemon from the whitelist.
   - Prioritizes dragon and bug choices before random fallback.
   - Uses catch rerolls only after checking the currently visible Pokemon choices.
-- **Shiny encounter counting in full-run mode** using visible catch choices encountered during the run.
+- **Shiny encounter counting** with last shiny name display. In shop mode, shiny counts come from shop rolls only, so post-hit safety runs do not inflate the shop shiny stats.
+- **Shop target tracking** for uploaded target hits that continue into the post-hit safety run flow.
+- **Legendary shop scheduling** can drain shop attempts until gold is below the egg price, then move to the next scheduled task.
 - **Rare Candy automation** that clicks the Rare Candy badge and uses it on the first Pokemon when available.
 - **Move tutor / TM handling** with a quota for the main Pokemon in full-run mode.
 - **Team replacement policy** for shiny, legendary, and priority Pokemon rewards.
@@ -94,13 +99,17 @@ From the latest release, download:
 
 ## Task Schedule
 
-The task schedule lets full-run mode chain several goals without manually changing the run target after each run.
+The task schedule lets the bot chain several goals without manually changing the run target after each run.
 
-Each row has a run target, an advance condition (`Wins` or `Runs`), and an amount. For example, the bot can finish one Daily Challenge win, then one Weekly Challenge win, then continue Story Classic - Kanto for achievement farming.
+Each row has a run target, an optional starter, an advance condition, and an amount when the selected condition needs one. For example, the bot can finish one Daily Challenge win, then one Weekly Challenge win, then continue Story Classic - Kanto for achievement farming.
+
+Schedule goals include attempts, completed runs, challenge completions, earned Pokegold, `Until shop funds low`, and `Forever`.
+
+For shop farming, capture a Legendary shop reroll settings snapshot on one row, set `Advance after` to `Until shop funds low`, then add a second row for Challenge Mode with a starter such as Darkrai and `Advance after` set to `Forever`.
 
 ![Task schedule window](assets/readme-task-schedule.png)
 
-When the schedule is enabled, the bot uses one browser, advances tasks in order, and stops after the final task is complete.
+When the schedule is enabled, the bot uses one browser, advances tasks in order, and stops after the final task is complete unless the active task is set to `Forever`.
 
 ## Pokemon And Item Logic
 
