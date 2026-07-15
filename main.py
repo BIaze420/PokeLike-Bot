@@ -28,7 +28,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_NAME = "PokeLike Bot"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 UPDATE_REPO = "BIaze420/PokeLike-Bot"
 UPDATE_API_URL = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 UPDATE_ASSET_NAMES = ("PokeLike Bot.exe", "PokeLike.Bot.exe")
@@ -68,21 +68,85 @@ COMPLETE_POKEDEX_ITEM_TARGET = "legend lure"
 STARTING_ITEM_REROLL_ALIASES = ("shiny charm", "shiny hunter")
 STARTER_NAME = "dratini"
 STARTING_ITEM_PRIORITY = (
-    "shiny hunter",
+    "mind plate",
+    "weakness policy",
+    "hp up",
+    "big root",
+    "cleanse tag",
     "eject pack",
-    "soft sand",
-    "shiny power",
     "stardust",
-    "yache berry",
-    "grassy seed",
-    "dragon scale",
-    "light clay",
+    "black sludge",
+    "legend lure",
     "power bracer",
-    "macho brace",
-    "black belt",
-    "wise glasses",
+    "shiny hunter",
+    "yache berry",
+    "legend aegis",
+    "legend might",
+    "pure incense",
+    "quick powder",
+    "razor claw",
+    "muscle band",
+    "oran berry",
 )
-REGULAR_ITEM_PRIORITY = ("lucky egg", "leftovers", "shell bell", "dragon fang", "rare candy", "tm")
+REGULAR_ITEM_PRIORITY = (
+    "lucky egg",
+    "twisted spoon",
+    "rare candy",
+    "leftovers",
+    "shell bell",
+    "tm",
+    "choice scarf",
+    "choice specs",
+    "wide lens",
+    "scope lens",
+)
+COMBAT_HELD_ITEM_PRIORITY = (
+    "twisted spoon",
+    "leftovers",
+    "shell bell",
+    "choice scarf",
+    "choice specs",
+    "wide lens",
+    "scope lens",
+)
+STARTING_ITEM_IGNORE = (
+    "adrenaline orb", "air balloon", "aspear berry", "babiri berry", "big mushroom",
+    "body plate", "bright powder", "casteliacone", "cell battery", "charti berry",
+    "chilan berry", "chople berry", "coba berry", "colbur berry", "comet shard",
+    "custap berry", "damp rock", "dark stone", "destiny knot", "draco plate",
+    "dragon fang", "dread plate", "earth plate", "eject button", "electirizer",
+    "electric seed", "everstone", "fist plate", "flame plate", "float stone",
+    "focus band", "focus sash", "haban berry", "hard stone", "hazard lens",
+    "heat rock", "icy rock", "insect plate", "iron ball", "iron plate",
+    "iron thorns", "kasib berry", "kebia berry", "lagging tail", "lansat berry",
+    "lead sparkle", "leaf stone", "legend s call", "life orb", "lucky punch",
+    "lum berry", "luminous moss", "macho brace", "magmarizer", "metal alloy",
+    "metal coat", "metal powder", "mirror herb", "misty seed", "mystic water",
+    "never melt ice", "occa berry", "pecha berry", "pink bow", "pixie plate",
+    "poison barb", "power lens", "pretty feather", "pretty wing", "protective pads",
+    "protector", "quick claw", "razor fang", "reaper cloth", "resonance",
+    "revival herb", "ring target", "rock incense", "rocky helmet", "roseli berry",
+    "sea incense", "shed shell", "shiny guard", "shoal salt", "shuca berry",
+    "sitrus berry", "sky plate", "smoke ball", "smooth rock", "snowball",
+    "soothe bell", "spooky plate", "star piece", "stealth goggles", "sticky barb",
+    "tanga berry", "tiny mushroom", "toxic orb", "toxic plate", "wacan berry",
+    "soft sand", "dragon scale", "silver powder", "binding band", "light clay",
+    "grassy seed", "shiny power", "wise glasses", "black belt",
+)
+REGULAR_ITEM_IGNORE = (
+    "eviolite",
+    "red card",
+    "dragon fang",
+    "choice band",
+    "expert belt",
+    "metronome",
+    "sharp beak",
+    "king s rock",
+    "assault vest",
+    "miracle seed",
+    "moon stone",
+    "silk scarf",
+)
 DEX_TARGET_OFF = "Off"
 DEX_TARGET_NORMAL = "Missing normal Dex"
 DEX_TARGET_SHINY = "Missing shiny Dex"
@@ -245,7 +309,7 @@ DEFAULT_PASSIVE_ITEM_DETAILS = {
     "wise glasses": "+35% Sp. ATK / +35% Sp. DEF.",
     "yache berry": "Pokemon get a random stat boost.",
 }
-CONSUMABLE_ITEM_ALIASES = ("rare candy", "tm")
+CONSUMABLE_ITEM_ALIASES = ("rare candy", "tm", "sacred ash")
 MAIN_MOVE_TARGET_USES = 2
 POKEMON_TYPE_NAMES = (
     "normal", "fire", "water", "electric", "grass", "ice", "fighting",
@@ -560,6 +624,10 @@ UNKNOWN_STARTING_ITEMS_PATH = os.path.join(
     DATA_DIR,
     "unknown_starting_items.json",
 )
+UNKNOWN_REGULAR_ITEMS_PATH = os.path.join(
+    DATA_DIR,
+    "unknown_regular_items.json",
+)
 PASSIVE_ITEM_DETAILS_PATH = os.path.join(
     DATA_DIR,
     "passive_item_details.json",
@@ -711,12 +779,14 @@ class PokeLikeBotGUI(ctk.CTk):
         self.bot_run_token_lock = threading.Lock()
         self.chromedriver_lock = threading.Lock()
         self.unknown_starting_items_lock = threading.Lock()
+        self.unknown_regular_items_lock = threading.Lock()
         self.passive_item_details_lock = threading.Lock()
         self.run_history_lock = threading.Lock()
         self.unknown_starting_items = self.load_unknown_starting_items()
+        self.unknown_regular_items = self.load_unknown_regular_items()
         self.passive_item_details = self.load_passive_item_details()
         self.run_history = self.load_run_history()
-        self.last_wallet_pokegold_total = self.last_run_history_wallet_total()
+        self.last_wallet_pokegold_total = None
         self.chromedriver_path = None
         self.worker_drivers = []
         self.worker_errors = []
@@ -736,18 +806,22 @@ class PokeLikeBotGUI(ctk.CTk):
         self.shop_targets_obtained = 0
         self.total_legendaries_seen = 0
         self.total_money_earned = 0
+        self.last_wallet_pokegold_total = None
         self.main_move_upgrades_used = 0
         self.run_encounters_checked = 0
         self.run_target_encounters = 0
         self.run_legendaries_seen = 0
         self.run_leaders_defeated = 0
         self.encounter_history = []
+        self.gui_log_lines = []
         self.shop_roll_log_lines = []
         self.last_team_snapshot = []
         self.last_passive_items_snapshot = []
         self.last_legendary_signature = None
         self.last_leader_signature = None
         self.awaiting_leader_item_roll = False
+        self.boss_combat_item_equipped = False
+        self.resumed_existing_challenge_run = False
         self.restart_attempt = False
         self.last_item_signature = None
         self.last_money_signature = None
@@ -761,7 +835,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.last_catch_scan_signature = None
         self.settings = self.load_settings()
         self.status_var = ctk.StringVar(value="Idle")
-        self.shop_shiny_rate_var = ctk.StringVar(value="Legendary shiny rate: --")
+        self.shop_shiny_rate_var = ctk.StringVar(value="Log")
         self.mode_var = ctk.StringVar(value=self.settings.get("mode", MODE_FULL_RUN))
         self.manual_start_var = ctk.BooleanVar(value=bool(self.settings.get("manual_start", False)))
         self.headless_var = ctk.BooleanVar(value=bool(self.settings.get("headless", False)))
@@ -779,7 +853,17 @@ class PokeLikeBotGUI(ctk.CTk):
         self.ignore_pokemon_var = ctk.BooleanVar(value=bool(self.settings.get("ignore_pokemon", False)))
         self.ignore_pokecenter_var = ctk.BooleanVar(value=bool(self.settings.get("ignore_pokecenter", False)))
         self.shiny_only_pokemon_var = ctk.BooleanVar(value=bool(self.settings.get("shiny_only_pokemon", False)))
+        self.start_shiny_filter_reroll_var = ctk.BooleanVar(
+            value=bool(self.settings.get("start_shiny_filter_reroll", False))
+        )
         self.no_tm_move_tutor_var = ctk.BooleanVar(value=bool(self.settings.get("no_tm_move_tutor", False)))
+        self.boss_combat_item_swap_var = ctk.BooleanVar(value=bool(self.settings.get("boss_combat_item_swap", False)))
+        self.combat_held_item_var = ctk.StringVar(value=self.settings.get("combat_held_item", ""))
+        self.prioritize_party_fill_var = ctk.BooleanVar(
+            value=bool(self.settings.get("prioritize_party_fill", True))
+        )
+        self.delay_party_fill_var = ctk.BooleanVar(value=bool(self.settings.get("delay_party_fill_until_map3", False)))
+        self.smart_trait_choice_var = ctk.BooleanVar(value=bool(self.settings.get("smart_trait_choice", True)))
         self.type_whitelist_var = ctk.StringVar(value=self.settings.get("pokemon_type_whitelist", ""))
         self.type_filter_mode_var = ctk.StringVar(
             value=self.settings.get("pokemon_type_filter_mode", POKEMON_FILTER_PRIORITIZE)
@@ -821,7 +905,16 @@ class PokeLikeBotGUI(ctk.CTk):
         self.current_ignore_pokemon = False
         self.current_ignore_pokecenter = False
         self.current_shiny_only_pokemon = False
+        self.current_start_shiny_filter_reroll = False
+        self.start_shiny_filter_acquired = False
         self.current_no_tm_move_tutor = False
+        self.current_boss_combat_item_swap = False
+        self.current_combat_held_item = ""
+        self.current_combat_held_items = []
+        self.boss_combat_item_equipped = False
+        self.current_prioritize_party_fill = True
+        self.current_delay_party_fill = False
+        self.current_smart_trait_choice = True
         self.current_type_whitelist = set()
         self.current_type_filter_mode = POKEMON_FILTER_PRIORITIZE
         self.current_whitelist_filter_mode = POKEMON_WHITELIST_ONLY
@@ -853,13 +946,22 @@ class PokeLikeBotGUI(ctk.CTk):
         self.regular_item_priority_by_starter = self.parse_starter_item_priority_map(
             self.settings.get("regular_item_priority_by_starter", {})
         )
+        self.combat_held_item_priority = self.parse_priority_text(
+            self.settings.get("combat_held_item_priority", ""),
+            COMBAT_HELD_ITEM_PRIORITY,
+        )
         self.starting_item_ignore = self.parse_priority_text(
             self.settings.get("starting_item_ignore", ""),
-            (),
+            STARTING_ITEM_IGNORE,
+        )
+        self.regular_item_ignore = self.parse_priority_text(
+            self.settings.get("regular_item_ignore", ""),
+            REGULAR_ITEM_IGNORE,
         )
         # Fold every already-discovered unknown item into the never-pick list so it
         # is both applied (never picked) AND visible/editable in Item Priorities.
         self.merge_unknowns_into_ignore()
+        self.merge_unknowns_into_regular_ignore()
         self.priority_window = None
         self.settings_window = None
         self.settings_controls = []
@@ -1222,6 +1324,7 @@ class PokeLikeBotGUI(ctk.CTk):
             "evolution_preference",
             "item_reroll_target",
             "pokegold_farm_target",
+            "combat_held_item",
             "pokemon_type_whitelist",
             "pokemon_type_filter_mode",
             "pokemon_whitelist_mode",
@@ -1246,7 +1349,7 @@ class PokeLikeBotGUI(ctk.CTk):
         shop_reroll_after_hit = data.get("shop_reroll_after_hit")
         if shop_reroll_after_hit in SHOP_REROLL_AFTER_HIT_OPTIONS:
             settings["shop_reroll_after_hit"] = shop_reroll_after_hit
-        for key in ["starting_item_priority", "regular_item_priority", "starting_item_ignore"]:
+        for key in ["starting_item_priority", "regular_item_priority", "combat_held_item_priority", "starting_item_ignore", "regular_item_ignore"]:
             value = data.get(key)
             if isinstance(value, (str, list, tuple)):
                 settings[key] = value
@@ -1266,7 +1369,12 @@ class PokeLikeBotGUI(ctk.CTk):
             "ignore_pokemon",
             "ignore_pokecenter",
             "shiny_only_pokemon",
+            "start_shiny_filter_reroll",
             "no_tm_move_tutor",
+            "boss_combat_item_swap",
+            "prioritize_party_fill",
+            "delay_party_fill_until_map3",
+            "smart_trait_choice",
         ]:
             value = data.get(key)
             if isinstance(value, bool):
@@ -1384,6 +1492,7 @@ class PokeLikeBotGUI(ctk.CTk):
             "shop_reroll_after_hit",
             "item_reroll_target",
             "pokegold_farm_target",
+            "combat_held_item",
             "pokemon_type_whitelist",
             "pokemon_type_filter_mode",
             "pokemon_whitelist_mode",
@@ -1395,7 +1504,12 @@ class PokeLikeBotGUI(ctk.CTk):
             "ignore_pokemon",
             "ignore_pokecenter",
             "shiny_only_pokemon",
+            "start_shiny_filter_reroll",
             "no_tm_move_tutor",
+            "boss_combat_item_swap",
+            "prioritize_party_fill",
+            "delay_party_fill_until_map3",
+            "smart_trait_choice",
         }
         for key in string_keys:
             raw = value.get(key)
@@ -1429,7 +1543,7 @@ class PokeLikeBotGUI(ctk.CTk):
         for key in bool_keys:
             if isinstance(value.get(key), bool):
                 result[key] = bool(value.get(key))
-        for key in ["starting_item_priority", "regular_item_priority", "starting_item_ignore"]:
+        for key in ["starting_item_priority", "regular_item_priority", "combat_held_item_priority", "starting_item_ignore", "regular_item_ignore"]:
             raw = value.get(key)
             if isinstance(raw, (list, tuple, str)):
                 result[key] = self.parse_priority_text(raw, ())
@@ -1457,7 +1571,13 @@ class PokeLikeBotGUI(ctk.CTk):
             "ignore_pokemon": bool(self.ignore_pokemon_var.get()),
             "ignore_pokecenter": bool(self.ignore_pokecenter_var.get()),
             "shiny_only_pokemon": bool(self.shiny_only_pokemon_var.get()),
+            "start_shiny_filter_reroll": bool(self.start_shiny_filter_reroll_var.get()),
             "no_tm_move_tutor": bool(self.no_tm_move_tutor_var.get()),
+            "boss_combat_item_swap": bool(self.boss_combat_item_swap_var.get()),
+            "combat_held_item": self.combat_held_item_var.get().strip(),
+            "prioritize_party_fill": bool(self.prioritize_party_fill_var.get()),
+            "delay_party_fill_until_map3": bool(self.delay_party_fill_var.get()),
+            "smart_trait_choice": bool(self.smart_trait_choice_var.get()),
             "pokemon_type_whitelist": self.type_whitelist_var.get().strip(),
             "pokemon_type_filter_mode": self.type_filter_mode_var.get(),
             "pokemon_whitelist_mode": self.whitelist_filter_mode_var.get(),
@@ -1465,7 +1585,9 @@ class PokeLikeBotGUI(ctk.CTk):
             "starting_item_priority": list(self.starting_item_priority),
             "regular_item_priority": list(self.regular_item_priority),
             "regular_item_priority_by_starter": dict(self.regular_item_priority_by_starter),
+            "combat_held_item_priority": list(self.combat_held_item_priority),
             "starting_item_ignore": list(self.starting_item_ignore),
+            "regular_item_ignore": list(self.regular_item_ignore),
         }
 
     def build_settings_payload(self):
@@ -1483,7 +1605,13 @@ class PokeLikeBotGUI(ctk.CTk):
             "ignore_pokemon": bool(self.ignore_pokemon_var.get()),
             "ignore_pokecenter": bool(self.ignore_pokecenter_var.get()),
             "shiny_only_pokemon": bool(self.shiny_only_pokemon_var.get()),
+            "start_shiny_filter_reroll": bool(self.start_shiny_filter_reroll_var.get()),
             "no_tm_move_tutor": bool(self.no_tm_move_tutor_var.get()),
+            "boss_combat_item_swap": bool(self.boss_combat_item_swap_var.get()),
+            "combat_held_item": self.combat_held_item_var.get().strip(),
+            "prioritize_party_fill": bool(self.prioritize_party_fill_var.get()),
+            "delay_party_fill_until_map3": bool(self.delay_party_fill_var.get()),
+            "smart_trait_choice": bool(self.smart_trait_choice_var.get()),
             "pokemon_type_whitelist": self.type_whitelist_var.get().strip(),
             "pokemon_type_filter_mode": self.type_filter_mode_var.get(),
             "pokemon_whitelist_mode": self.whitelist_filter_mode_var.get(),
@@ -1499,7 +1627,9 @@ class PokeLikeBotGUI(ctk.CTk):
             "starting_item_priority": list(self.starting_item_priority),
             "regular_item_priority": list(self.regular_item_priority),
             "regular_item_priority_by_starter": dict(self.regular_item_priority_by_starter),
+            "combat_held_item_priority": list(self.combat_held_item_priority),
             "starting_item_ignore": list(self.starting_item_ignore),
+            "regular_item_ignore": list(self.regular_item_ignore),
         }
 
     def apply_settings_payload_to_ui(self, settings):
@@ -1532,7 +1662,13 @@ class PokeLikeBotGUI(ctk.CTk):
         set_bool(self.ignore_pokemon_var, "ignore_pokemon")
         set_bool(self.ignore_pokecenter_var, "ignore_pokecenter")
         set_bool(self.shiny_only_pokemon_var, "shiny_only_pokemon")
+        set_bool(self.start_shiny_filter_reroll_var, "start_shiny_filter_reroll")
         set_bool(self.no_tm_move_tutor_var, "no_tm_move_tutor")
+        set_bool(self.boss_combat_item_swap_var, "boss_combat_item_swap")
+        set_var(self.combat_held_item_var, "combat_held_item")
+        set_bool(self.prioritize_party_fill_var, "prioritize_party_fill")
+        set_bool(self.delay_party_fill_var, "delay_party_fill_until_map3")
+        set_bool(self.smart_trait_choice_var, "smart_trait_choice")
         set_var(self.type_whitelist_var, "pokemon_type_whitelist")
         set_var(self.type_filter_mode_var, "pokemon_type_filter_mode")
         set_var(self.whitelist_filter_mode_var, "pokemon_whitelist_mode")
@@ -1549,12 +1685,17 @@ class PokeLikeBotGUI(ctk.CTk):
         if "regular_item_priority" in settings:
             self.regular_item_priority = self.parse_priority_text(settings.get("regular_item_priority"), REGULAR_ITEM_PRIORITY)
         if "starting_item_ignore" in settings:
-            self.starting_item_ignore = self.parse_priority_text(settings.get("starting_item_ignore"), ())
+            self.starting_item_ignore = self.parse_priority_text(settings.get("starting_item_ignore"), STARTING_ITEM_IGNORE)
+        if "regular_item_ignore" in settings:
+            self.regular_item_ignore = self.parse_priority_text(settings.get("regular_item_ignore"), REGULAR_ITEM_IGNORE)
         if "regular_item_priority_by_starter" in settings:
             self.regular_item_priority_by_starter = self.parse_starter_item_priority_map(
                 settings.get("regular_item_priority_by_starter", {})
             )
+        if "combat_held_item_priority" in settings:
+            self.combat_held_item_priority = self.parse_priority_text(settings.get("combat_held_item_priority"), COMBAT_HELD_ITEM_PRIORITY)
         self.merge_unknowns_into_ignore()
+        self.merge_unknowns_into_regular_ignore()
         self.update_schedule_summary()
         self.update_stats_labels()
         return True
@@ -1813,6 +1954,7 @@ class PokeLikeBotGUI(ctk.CTk):
         )
 
     def pokemon_filter_payload(self):
+        party_count = min(int((self.party_summary() or {}).get("count") or 0), 6)
         return {
             "ignorePokemon": bool(getattr(self, "current_ignore_pokemon", False)),
             "shinyOnly": bool(getattr(self, "current_shiny_only_pokemon", False)),
@@ -1823,6 +1965,12 @@ class PokeLikeBotGUI(ctk.CTk):
             "typeMode": getattr(self, "current_type_filter_mode", POKEMON_FILTER_PRIORITIZE),
             "whitelistMode": getattr(self, "current_whitelist_filter_mode", POKEMON_WHITELIST_ONLY),
             "generationWhitelist": list(getattr(self, "current_generation_whitelist", set()) or []),
+            "smartTraitChoice": bool(getattr(self, "current_smart_trait_choice", True)),
+            "partyCount": party_count,
+            "startShinyGate": bool(
+                getattr(self, "current_start_shiny_filter_reroll", False)
+                and not getattr(self, "start_shiny_filter_acquired", False)
+            ),
         }
 
     def pokemon_name_allowed_by_filters(self, name, shiny=False):
@@ -1901,6 +2049,32 @@ class PokeLikeBotGUI(ctk.CTk):
                 if self.normalize_item_name(item) != "tm"
             ]
         return priority
+
+    def active_regular_item_ignore(self):
+        priority_names = {
+            self.normalize_item_name(name)
+            for name in list(self.active_regular_item_priority()) + list(self.active_combat_held_item_priority())
+        }
+        return [
+            item for item in self.regular_item_ignore
+            if self.normalize_item_name(item) not in priority_names
+        ]
+
+    def active_combat_held_item_priority(self):
+        items = list(getattr(self, "combat_held_item_priority", []) or [])
+        legacy_item = self.normalize_item_name(getattr(self, "current_combat_held_item", ""))
+        if legacy_item and legacy_item not in {self.normalize_item_name(item) for item in items}:
+            items.insert(0, legacy_item)
+        return self.parse_priority_text(items, ())
+
+    def active_restore_held_item(self):
+        consumables = {self.normalize_item_name(item) for item in CONSUMABLE_ITEM_ALIASES}
+        combat_items = {self.normalize_item_name(item) for item in self.active_combat_held_item_priority()}
+        for item in self.active_regular_item_priority():
+            normalized = self.normalize_item_name(item)
+            if normalized and normalized not in consumables and normalized not in combat_items:
+                return item
+        return ""
 
     def strip_item_detail(self, text):
         text = str(text or "").strip()
@@ -2081,6 +2255,67 @@ class PokeLikeBotGUI(ctk.CTk):
             if self.normalize_item_name(item) not in priority_names
         ]
 
+    def load_unknown_regular_items(self):
+        try:
+            with open(UNKNOWN_REGULAR_ITEMS_PATH, "r", encoding="utf-8") as items_file:
+                data = json.load(items_file)
+        except Exception:
+            return set()
+        if not isinstance(data, list):
+            return set()
+        known_items = {self.normalize_item_name(item) for item in KNOWN_PASSIVE_ITEMS}
+        default_priority = {self.normalize_item_name(item) for item in REGULAR_ITEM_PRIORITY}
+        return {
+            self.normalize_item_name(item)
+            for item in data
+            if self.normalize_item_name(item)
+            and self.normalize_item_name(item) not in known_items
+            and self.normalize_item_name(item) not in default_priority
+        }
+
+    def record_unknown_regular_items(self, names):
+        priority_names = {
+            self.normalize_item_name(name)
+            for name in list(self.active_regular_item_priority()) + list(self.active_combat_held_item_priority())
+        }
+        new_items = []
+        with self.unknown_regular_items_lock:
+            for name in names or []:
+                normalized = self.normalize_item_name(name)
+                if not normalized or normalized in priority_names or normalized in self.unknown_regular_items:
+                    continue
+                self.unknown_regular_items.add(normalized)
+                new_items.append(normalized)
+            if not new_items:
+                return
+            try:
+                with open(UNKNOWN_REGULAR_ITEMS_PATH, "w", encoding="utf-8") as items_file:
+                    json.dump(sorted(self.unknown_regular_items), items_file, indent=2)
+            except Exception as exc:
+                self.log(f"Could not save unknown held items: {exc}")
+                return
+        self.merge_unknowns_into_regular_ignore()
+        self.log("Unknown held item(s) recorded: " + ", ".join(sorted(new_items)))
+
+    def merge_unknowns_into_regular_ignore(self):
+        try:
+            priority_names = {
+                self.normalize_item_name(x)
+                for x in list(self.active_regular_item_priority()) + list(self.active_combat_held_item_priority())
+            }
+            self.regular_item_ignore = [
+                item for item in self.regular_item_ignore
+                if self.normalize_item_name(item) not in priority_names
+            ]
+            have = {self.normalize_item_name(x) for x in self.regular_item_ignore}
+            for item in sorted(self.unknown_regular_items):
+                norm = self.normalize_item_name(item)
+                if norm and norm not in priority_names and norm not in have:
+                    self.regular_item_ignore.append(item)
+                    have.add(norm)
+        except Exception:
+            pass
+
     def save_settings(self):
         settings = self.build_settings_payload()
         try:
@@ -2236,6 +2471,7 @@ class PokeLikeBotGUI(ctk.CTk):
                 MODE_LEGENDARY_SHOP_REROLL,
             ],
             variable=self.mode_var,
+            command=lambda _value: self.update_log_panel_title(_value),
         )
         self.mode_selector.grid(row=0, column=1, padx=(0, 18), sticky="ew")
 
@@ -2363,23 +2599,25 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         self.run_history_button.grid(row=1, column=2, columnspan=2, padx=(6, 0), pady=(8, 0), sticky="ew")
 
-        self.shop_roll_log_box = ctk.CTkFrame(controls, corner_radius=8)
-        self.shop_roll_log_box.grid(row=6, column=0, columnspan=3, padx=12, pady=(0, 14), sticky="ew")
-        self.shop_roll_log_box.grid_columnconfigure(0, weight=1)
+        self.log_box = ctk.CTkFrame(controls, fg_color="transparent", corner_radius=0)
+        self.log_box.grid(row=6, column=0, columnspan=3, padx=12, pady=(0, 14), sticky="ew")
+        self.log_box.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
-            self.shop_roll_log_box,
+            self.log_box,
             textvariable=self.shop_shiny_rate_var,
             text_color="gray70",
             anchor="w",
         ).grid(row=0, column=0, padx=8, pady=(8, 0), sticky="ew")
-        self.shop_roll_log_text = ctk.CTkTextbox(
-            self.shop_roll_log_box,
+        self.gui_log_text = ctk.CTkTextbox(
+            self.log_box,
             height=72,
             wrap="word",
             font=ctk.CTkFont(size=12),
         )
-        self.shop_roll_log_text.grid(row=1, column=0, padx=8, pady=8, sticky="ew")
-        self.shop_roll_log_text.configure(state="disabled")
+        self.gui_log_text.grid(row=1, column=0, padx=8, pady=8, sticky="ew")
+        self.gui_log_text.configure(state="disabled")
+        self.shop_roll_log_text = self.gui_log_text
+        self.update_log_panel_title()
 
     def create_stat(self, parent, label, value, row, column):
         box = ctk.CTkFrame(parent, corner_radius=10)
@@ -2571,42 +2809,67 @@ class PokeLikeBotGUI(ctk.CTk):
             text="No TMs or move tutor",
             variable=self.no_tm_move_tutor_var,
         )).grid(row=2, column=1, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Reroll start for shiny matching filters",
+            variable=self.start_shiny_filter_reroll_var,
+        )).grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Swap combat item for bosses",
+            variable=self.boss_combat_item_swap_var,
+        )).grid(row=4, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Prioritize catches while party is under 6",
+            variable=self.prioritize_party_fill_var,
+        )).grid(row=5, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Delay party-fill catches until map 3",
+            variable=self.delay_party_fill_var,
+        )).grid(row=6, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+        register(ctk.CTkCheckBox(
+            filters_box,
+            text="Smart type ability choice",
+            variable=self.smart_trait_choice_var,
+        )).grid(row=7, column=0, columnspan=2, padx=10, pady=5, sticky="w")
         ctk.CTkLabel(filters_box, text="Whitelist mode", text_color="gray70").grid(
-            row=3, column=0, padx=10, pady=5, sticky="w"
+            row=8, column=0, padx=10, pady=5, sticky="w"
         )
         self.whitelist_filter_mode_selector = register(ctk.CTkOptionMenu(
             filters_box,
             values=list(POKEMON_WHITELIST_OPTIONS),
             variable=self.whitelist_filter_mode_var,
         ))
-        self.whitelist_filter_mode_selector.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        self.whitelist_filter_mode_selector.grid(row=8, column=1, padx=10, pady=5, sticky="ew")
         ctk.CTkLabel(filters_box, text="Type mode", text_color="gray70").grid(
-            row=4, column=0, padx=10, pady=5, sticky="w"
+            row=10, column=0, padx=10, pady=5, sticky="w"
         )
         self.type_filter_mode_selector = register(ctk.CTkOptionMenu(
             filters_box,
             values=list(POKEMON_FILTER_OPTIONS),
             variable=self.type_filter_mode_var,
         ))
-        self.type_filter_mode_selector.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        self.type_filter_mode_selector.grid(row=10, column=1, padx=10, pady=5, sticky="ew")
         ctk.CTkLabel(filters_box, text="Type whitelist", text_color="gray70").grid(
-            row=5, column=0, padx=10, pady=5, sticky="w"
+            row=11, column=0, padx=10, pady=5, sticky="w"
         )
         self.type_whitelist_entry = register(ctk.CTkEntry(
             filters_box,
             textvariable=self.type_whitelist_var,
             placeholder_text="Dragon, Fire, Fairy",
         ))
-        self.type_whitelist_entry.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+        self.type_whitelist_entry.grid(row=11, column=1, padx=10, pady=5, sticky="ew")
         ctk.CTkLabel(filters_box, text="Generation whitelist", text_color="gray70").grid(
-            row=6, column=0, padx=10, pady=(5, 10), sticky="w"
+            row=12, column=0, padx=10, pady=(5, 10), sticky="w"
         )
         self.generation_whitelist_entry = register(ctk.CTkEntry(
             filters_box,
             textvariable=self.generation_whitelist_var,
             placeholder_text="Kanto, Hoenn or Gen 1, Gen 3",
         ))
-        self.generation_whitelist_entry.grid(row=6, column=1, padx=10, pady=(5, 10), sticky="ew")
+        self.generation_whitelist_entry.grid(row=12, column=1, padx=10, pady=(5, 10), sticky="ew")
 
         ctk.CTkLabel(run_box, text="After reroll", text_color="gray70").grid(
             row=4, column=0, padx=12, pady=6, sticky="w"
@@ -3275,7 +3538,7 @@ class PokeLikeBotGUI(ctk.CTk):
         window.minsize(720, 520)
         self.prepare_popup_window(window)
         window.grid_columnconfigure((0, 1), weight=1)
-        window.grid_rowconfigure((2, 4), weight=1)
+        window.grid_rowconfigure((3, 5), weight=1)
         self.priority_window = window
 
         ctk.CTkLabel(
@@ -3284,26 +3547,43 @@ class PokeLikeBotGUI(ctk.CTk):
             text_color="gray70",
         ).grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 10), sticky="w")
 
+        toolbar = ctk.CTkFrame(window, fg_color="transparent")
+        toolbar.grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="ew")
+        toolbar.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
+        ctk.CTkButton(
+            toolbar,
+            text="Up",
+            command=lambda: move_selected_item(-1),
+        ).grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        ctk.CTkButton(
+            toolbar,
+            text="Down",
+            command=lambda: move_selected_item(1),
+        ).grid(row=0, column=1, padx=6, sticky="ew")
+        ctk.CTkButton(
+            toolbar,
+            text="To priority",
+            command=lambda: move_selected_to_priority(),
+        ).grid(row=0, column=2, padx=6, sticky="ew")
+        ctk.CTkButton(
+            toolbar,
+            text="To never-pick",
+            command=lambda: move_selected_to_ignore(),
+        ).grid(row=0, column=3, padx=6, sticky="ew")
+        ctk.CTkButton(
+            toolbar,
+            text="Combat",
+            command=lambda: toggle_combat_item(),
+        ).grid(row=0, column=4, padx=(6, 0), sticky="ew")
+
         starting_header = ctk.CTkFrame(window, fg_color="transparent")
-        starting_header.grid(row=1, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
+        starting_header.grid(row=2, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
         starting_header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(starting_header, text="Starting / passive item priority").grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(
-            starting_header,
-            text="Up",
-            width=52,
-            command=lambda: starting_text.move_selected(-1),
-        ).grid(row=0, column=1, padx=(8, 0), sticky="e")
-        ctk.CTkButton(
-            starting_header,
-            text="Down",
-            width=64,
-            command=lambda: starting_text.move_selected(1),
-        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
         starter_key = self.current_starter_key()
         starter_label = self.current_starter_label()
         regular_header = ctk.CTkFrame(window, fg_color="transparent")
-        regular_header.grid(row=1, column=1, padx=(8, 16), pady=(0, 6), sticky="ew")
+        regular_header.grid(row=2, column=1, padx=(8, 16), pady=(0, 6), sticky="ew")
         regular_header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             regular_header,
@@ -3311,28 +3591,16 @@ class PokeLikeBotGUI(ctk.CTk):
         ).grid(row=0, column=0, sticky="w")
         ctk.CTkButton(
             regular_header,
-            text="Up",
-            width=52,
-            command=lambda: regular_text.move_selected(-1),
-        ).grid(row=0, column=1, padx=(8, 0), sticky="e")
-        ctk.CTkButton(
-            regular_header,
-            text="Down",
-            width=64,
-            command=lambda: regular_text.move_selected(1),
-        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
-        ctk.CTkButton(
-            regular_header,
             text="Load default",
             width=96,
             command=lambda: load_regular_default(),
-        ).grid(row=0, column=3, padx=(6, 0), sticky="e")
+        ).grid(row=0, column=1, padx=(6, 0), sticky="e")
         ctk.CTkButton(
             regular_header,
             text="Clear starter",
             width=104,
             command=lambda: clear_starter_regular_profile(),
-        ).grid(row=0, column=4, padx=(6, 0), sticky="e")
+        ).grid(row=0, column=2, padx=(6, 0), sticky="e")
 
         class PriorityBlockList:
             def __init__(block_self, parent, row, column, values, padx, rowspan=1, group_items=False):
@@ -3434,6 +3702,11 @@ class PokeLikeBotGUI(ctk.CTk):
             def type_color(block_self, group):
                 return POKEMON_TYPE_COLORS.get(group, POKEMON_TYPE_COLORS["General"])
 
+            def is_combat_item(block_self, value):
+                combat_items = getattr(window, "_combat_held_item_priority", self.combat_held_item_priority)
+                combat_names = {self.normalize_item_name(item) for item in combat_items}
+                return self.normalize_item_name(value) in combat_names
+
             def update_selection_styles(block_self):
                 for value, block in list(block_self.row_widgets.items()):
                     selected = (
@@ -3441,10 +3714,11 @@ class PokeLikeBotGUI(ctk.CTk):
                         and block_self.selected_index < len(block_self.items)
                         and block_self.items[block_self.selected_index] == value
                     )
+                    combat = block_self.is_combat_item(value)
                     try:
                         block.configure(
-                            fg_color="#1f3a5f" if selected else "#111827",
-                            border_color="#38bdf8" if selected else "#263244",
+                            fg_color="#1f3a5f" if selected else "#3b1116" if combat else "#111827",
+                            border_color="#38bdf8" if selected else "#f87171" if combat else "#263244",
                         )
                     except Exception:
                         pass
@@ -3491,9 +3765,9 @@ class PokeLikeBotGUI(ctk.CTk):
                         block = ctk.CTkFrame(
                             block_self.frame,
                             corner_radius=8,
-                            fg_color="#1f3a5f" if selected else "#111827",
+                            fg_color="#1f3a5f" if selected else "#3b1116" if block_self.is_combat_item(value) else "#111827",
                             border_width=1,
-                            border_color="#38bdf8" if selected else "#263244",
+                            border_color="#38bdf8" if selected else "#f87171" if block_self.is_combat_item(value) else "#263244",
                         )
                         block.grid(row=row, column=0, padx=6, pady=(3, 2), sticky="ew")
                         block.grid_columnconfigure(0, weight=1)
@@ -3592,49 +3866,34 @@ class PokeLikeBotGUI(ctk.CTk):
         priority_block_lists = []
         starting_text = PriorityBlockList(
             window,
-            row=2,
+            row=3,
             column=0,
             values=self.starting_item_priority,
             padx=(16, 8),
-            group_items=True,
+            group_items=False,
         )
         priority_block_lists.append(starting_text)
 
         regular_text = PriorityBlockList(
             window,
-            row=2,
+            row=3,
             column=1,
-            rowspan=3,
             values=self.active_regular_item_priority(),
             padx=(8, 16),
-            group_items=True,
+            group_items=False,
         )
         priority_block_lists.append(regular_text)
 
-        ignore_header = ctk.CTkFrame(window, fg_color="transparent")
-        ignore_header.grid(row=3, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
-        ctk.CTkLabel(ignore_header, text="Starting / passive never-pick list").pack(side="left")
-        ctk.CTkButton(
-            ignore_header, text="To priority", width=96,
-            command=lambda: move_lines(ignore_text, starting_text),
-        ).pack(side="right", padx=(6, 0))
-        ctk.CTkButton(
-            ignore_header, text="To never-pick", width=118,
-            command=lambda: move_lines(starting_text, ignore_text),
-        ).pack(side="right")
+        window._combat_held_item_priority = list(self.combat_held_item_priority)
+        regular_text.render()
 
-        ctk.CTkButton(
-            ignore_header, text="Down", width=64,
-            command=lambda: ignore_text.move_selected(1),
-        ).pack(side="right", padx=(6, 0))
-        ctk.CTkButton(
-            ignore_header, text="Up", width=52,
-            command=lambda: ignore_text.move_selected(-1),
-        ).pack(side="right", padx=(6, 0))
+        ignore_header = ctk.CTkFrame(window, fg_color="transparent")
+        ignore_header.grid(row=4, column=0, padx=(16, 8), pady=(0, 6), sticky="ew")
+        ctk.CTkLabel(ignore_header, text="Starting / passive never-pick list").pack(side="left")
 
         ignore_text = PriorityBlockList(
             window,
-            row=4,
+            row=5,
             column=0,
             values=self.starting_item_ignore,
             padx=(16, 8),
@@ -3642,7 +3901,21 @@ class PokeLikeBotGUI(ctk.CTk):
         )
         priority_block_lists.append(ignore_text)
 
-        styled_boxes = [starting_text, regular_text, ignore_text]
+        regular_ignore_header = ctk.CTkFrame(window, fg_color="transparent")
+        regular_ignore_header.grid(row=4, column=1, padx=(8, 16), pady=(0, 6), sticky="ew")
+        ctk.CTkLabel(regular_ignore_header, text="Held-item never-pick list").pack(side="left")
+
+        regular_ignore_text = PriorityBlockList(
+            window,
+            row=5,
+            column=1,
+            values=self.regular_item_ignore,
+            padx=(8, 16),
+            group_items=True,
+        )
+        priority_block_lists.append(regular_ignore_text)
+
+        styled_boxes = [starting_text, regular_text, ignore_text, regular_ignore_text]
 
         def refresh_priority_box(box):
             box.render()
@@ -3655,6 +3928,11 @@ class PokeLikeBotGUI(ctk.CTk):
 
         def _selected_lines(box):
             return [ln.strip() for ln in box.selected_items() if ln.strip()]
+
+        def replace_box_items(box, lines, selected_index=None):
+            box.items = self.parse_priority_text(lines, ())
+            box.selected_index = selected_index if selected_index is not None and box.items else None
+            box.render()
 
         def move_lines(src, dst):
             picks = _selected_lines(src)
@@ -3671,15 +3949,56 @@ class PokeLikeBotGUI(ctk.CTk):
                 if p.lower() not in have:
                     dst_lines.append(p)
                     have.add(p.lower())
-            src.delete("1.0", "end")
-            src.insert("1.0", "\n".join(src_lines))
-            dst.delete("1.0", "end")
-            dst.insert("1.0", "\n".join(dst_lines))
-            refresh_priority_box(src)
-            refresh_priority_box(dst)
+            replace_box_items(src, src_lines)
+            replace_box_items(dst, dst_lines, max(0, len(dst_lines) - 1))
+
+        def selected_box():
+            for box in priority_block_lists:
+                if box.selected_items():
+                    return box
+            return None
+
+        def move_selected_item(direction):
+            box = selected_box()
+            if box is not None:
+                box.move_selected(direction)
+
+        def move_selected_to_priority():
+            box = selected_box()
+            if box is ignore_text:
+                move_lines(ignore_text, starting_text)
+            elif box is regular_ignore_text:
+                move_lines(regular_ignore_text, regular_text)
+
+        def move_selected_to_ignore():
+            box = selected_box()
+            if box is starting_text:
+                move_lines(starting_text, ignore_text)
+            elif box is regular_text:
+                move_lines(regular_text, regular_ignore_text)
+
+        def toggle_combat_item():
+            picks = _selected_lines(regular_text)
+            if not picks:
+                return
+            combat_items = list(getattr(window, "_combat_held_item_priority", []))
+            combat_names = {self.normalize_item_name(item) for item in combat_items}
+            for item in picks:
+                normalized = self.normalize_item_name(item)
+                if normalized in combat_names:
+                    combat_items = [
+                        current for current in combat_items
+                        if self.normalize_item_name(current) != normalized
+                    ]
+                    combat_names.discard(normalized)
+                else:
+                    combat_items.append(item)
+                    combat_names.add(normalized)
+            window._combat_held_item_priority = combat_items
+            regular_text.update_selection_styles()
 
         button_row = ctk.CTkFrame(window, fg_color="transparent")
-        button_row.grid(row=5, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="ew")
+        button_row.grid(row=6, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="ew")
         button_row.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         def save_priorities(save_for_starter):
@@ -3695,24 +4014,38 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.regular_item_priority_by_starter[starter_key] = regular_priorities
             else:
                 self.regular_item_priority = regular_priorities
+            combat_marked = {
+                self.normalize_item_name(item)
+                for item in getattr(window, "_combat_held_item_priority", [])
+            }
+            self.combat_held_item_priority = [
+                item for item in regular_priorities
+                if self.normalize_item_name(item) in combat_marked
+            ]
             self.starting_item_ignore = self.parse_priority_text(
                 ignore_text.get("1.0", "end"),
-                (),
+                STARTING_ITEM_IGNORE,
             )
+            self.regular_item_ignore = self.parse_priority_text(
+                regular_ignore_text.get("1.0", "end"),
+                REGULAR_ITEM_IGNORE,
+            )
+            self.merge_unknowns_into_ignore()
+            self.merge_unknowns_into_regular_ignore()
             self.save_settings()
             regular_target = f"{starter_label} held-item" if save_for_starter and starter_key else "default held-item"
             self.log(
                 "Updated item priorities: "
                 f"{len(self.starting_item_priority)} starting, "
                 f"{len(regular_priorities)} {regular_target}, "
-                f"{len(self.starting_item_ignore)} ignored."
+                f"{len(self.combat_held_item_priority)} combat held, "
+                f"{len(self.starting_item_ignore)} passive ignored, "
+                f"{len(self.regular_item_ignore)} held ignored."
             )
             close_window()
 
         def load_regular_default():
-            regular_text.delete("1.0", "end")
-            regular_text.insert("1.0", self.priority_text(self.regular_item_priority))
-            refresh_priority_box(regular_text)
+            replace_box_items(regular_text, self.regular_item_priority)
 
         def clear_starter_regular_profile():
             if starter_key and starter_key in self.regular_item_priority_by_starter:
@@ -3722,13 +4055,12 @@ class PokeLikeBotGUI(ctk.CTk):
             load_regular_default()
 
         def reset_priorities():
-            starting_text.delete("1.0", "end")
-            starting_text.insert("1.0", self.priority_text(STARTING_ITEM_PRIORITY))
-            regular_text.delete("1.0", "end")
-            regular_text.insert("1.0", self.priority_text(REGULAR_ITEM_PRIORITY))
-            ignore_text.delete("1.0", "end")
-            for box in styled_boxes:
-                refresh_priority_box(box)
+            replace_box_items(starting_text, STARTING_ITEM_PRIORITY)
+            replace_box_items(regular_text, REGULAR_ITEM_PRIORITY)
+            window._combat_held_item_priority = list(COMBAT_HELD_ITEM_PRIORITY)
+            replace_box_items(ignore_text, STARTING_ITEM_IGNORE)
+            replace_box_items(regular_ignore_text, REGULAR_ITEM_IGNORE)
+            regular_text.update_selection_styles()
 
         def close_window():
             self.priority_window = None
@@ -3754,6 +4086,27 @@ class PokeLikeBotGUI(ctk.CTk):
 
     def log(self, message):
         print(message, flush=True)
+        text = str(message)
+        self.gui_log_lines.append(text)
+        self.gui_log_lines = self.gui_log_lines[-80:]
+
+        def update_log_panel():
+            widget = getattr(self, "gui_log_text", None)
+            if not widget:
+                return
+            try:
+                widget.configure(state="normal")
+                widget.delete("1.0", "end")
+                widget.insert("1.0", "\n".join(self.gui_log_lines))
+                widget.see("end")
+                widget.configure(state="disabled")
+            except Exception:
+                pass
+
+        try:
+            self.safe_ui(update_log_panel)
+        except Exception:
+            pass
         try:
             os.makedirs(DATA_DIR, exist_ok=True)
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -3765,22 +4118,23 @@ class PokeLikeBotGUI(ctk.CTk):
     def append_shop_roll_log(self, message):
         self.shop_roll_log_lines.append(message)
         self.shop_roll_log_lines = self.shop_roll_log_lines[-3:]
-
-        def update():
-            try:
-                self.shop_roll_log_text.configure(state="normal")
-                self.shop_roll_log_text.delete("1.0", "end")
-                self.shop_roll_log_text.insert("1.0", "\n".join(self.shop_roll_log_lines))
-                self.shop_roll_log_text.configure(state="disabled")
-            except Exception:
-                pass
-
-        self.safe_ui(update)
+        self.log(message)
 
     def update_shop_shiny_rate(self, rate_text):
-        if not rate_text:
+        if not rate_text or not self.is_shop_reroll_mode():
             return
         self.safe_ui(lambda: self.shop_shiny_rate_var.set(f"Legendary shiny rate: {rate_text}"))
+
+    def update_log_panel_title(self, mode=None):
+        def apply_title():
+            selected_mode = mode or self.mode_var.get()
+            if selected_mode in {MODE_SHINY_SHOP_REROLL, MODE_LEGENDARY_SHOP_REROLL}:
+                if not str(self.shop_shiny_rate_var.get() or "").startswith("Legendary shiny rate:"):
+                    self.shop_shiny_rate_var.set("Legendary shiny rate: --")
+            else:
+                self.shop_shiny_rate_var.set("Log")
+
+        self.safe_ui(apply_title)
 
     def set_status(self, text):
         self.status_var.set(text)
@@ -3856,7 +4210,7 @@ class PokeLikeBotGUI(ctk.CTk):
         money_text = f"{int(self.total_money_earned):,} ({self.format_money_per_hour()})"
         self.safe_ui(lambda: self.money_label.configure(text=money_text))
         wallet = self.last_wallet_pokegold_total
-        wallet_text = f"{int(wallet):,}" if wallet is not None else "--"
+        wallet_text = f"{int(wallet):,}" if wallet is not None else "0"
         self.safe_ui(lambda: self.wallet_gold_label.configure(text=wallet_text))
         self.safe_ui(self.update_dynamic_stat_cards)
 
@@ -3941,6 +4295,7 @@ class PokeLikeBotGUI(ctk.CTk):
         set_var(self.target_pokemon_var, settings.get("shiny_whitelist"))
         set_var(self.shop_ignore_pokemon_var, settings.get("shop_ignore_pokemon"))
         set_var(self.evolution_preference_var, settings.get("evolution_preference"))
+        set_var(self.combat_held_item_var, settings.get("combat_held_item"))
         set_var(self.dex_target_var, settings.get("dex_target_mode"))
         set_var(self.full_run_dex_priority_var, settings.get("full_run_dex_priority_mode"))
         set_var(self.reroll_completion_var, settings.get("reroll_completion_mode"))
@@ -3950,7 +4305,12 @@ class PokeLikeBotGUI(ctk.CTk):
         set_bool(self.ignore_pokemon_var, settings.get("ignore_pokemon"))
         set_bool(self.ignore_pokecenter_var, settings.get("ignore_pokecenter"))
         set_bool(self.shiny_only_pokemon_var, settings.get("shiny_only_pokemon"))
+        set_bool(self.start_shiny_filter_reroll_var, settings.get("start_shiny_filter_reroll"))
         set_bool(self.no_tm_move_tutor_var, settings.get("no_tm_move_tutor"))
+        set_bool(self.boss_combat_item_swap_var, settings.get("boss_combat_item_swap"))
+        set_bool(self.prioritize_party_fill_var, settings.get("prioritize_party_fill"))
+        set_bool(self.delay_party_fill_var, settings.get("delay_party_fill_until_map3"))
+        set_bool(self.smart_trait_choice_var, settings.get("smart_trait_choice"))
         set_var(self.type_whitelist_var, settings.get("pokemon_type_whitelist"))
         set_var(self.type_filter_mode_var, settings.get("pokemon_type_filter_mode"))
         set_var(self.whitelist_filter_mode_var, settings.get("pokemon_whitelist_mode"))
@@ -3959,7 +4319,9 @@ class PokeLikeBotGUI(ctk.CTk):
         for attr, key in [
             ("starting_item_priority", "starting_item_priority"),
             ("regular_item_priority", "regular_item_priority"),
+            ("combat_held_item_priority", "combat_held_item_priority"),
             ("starting_item_ignore", "starting_item_ignore"),
+            ("regular_item_ignore", "regular_item_ignore"),
         ]:
             if key in settings:
                 setattr(self, attr, list(settings.get(key) or []))
@@ -3967,6 +4329,8 @@ class PokeLikeBotGUI(ctk.CTk):
         if "regular_item_priority_by_starter" in settings:
             self.regular_item_priority_by_starter = dict(settings.get("regular_item_priority_by_starter") or {})
             changed = True
+        self.merge_unknowns_into_ignore()
+        self.merge_unknowns_into_regular_ignore()
 
         if update_runtime:
             mode = self.mode_var.get()
@@ -3990,6 +4354,8 @@ class PokeLikeBotGUI(ctk.CTk):
             self.current_ignore_pokecenter = bool(self.ignore_pokecenter_var.get())
             self.current_shiny_only_pokemon = bool(self.shiny_only_pokemon_var.get())
             self.current_no_tm_move_tutor = bool(self.no_tm_move_tutor_var.get())
+            self.current_prioritize_party_fill = bool(self.prioritize_party_fill_var.get())
+            self.current_delay_party_fill = bool(self.delay_party_fill_var.get())
             self.current_type_whitelist = self.parse_type_whitelist(self.type_whitelist_var.get())
             self.current_type_filter_mode = (
                 self.type_filter_mode_var.get()
@@ -4309,6 +4675,11 @@ class PokeLikeBotGUI(ctk.CTk):
             text = ", ".join(name.title() for name in current)
             self.shop_ignore_pokemon_var.set(text)
             self.current_shop_ignore_pokemon_list = current
+            step = self.active_schedule_step()
+            if isinstance(step, dict):
+                settings = step.get("settings")
+                if isinstance(settings, dict) and settings.get("mode") in {MODE_SHINY_SHOP_REROLL, MODE_LEGENDARY_SHOP_REROLL}:
+                    settings["shop_ignore_pokemon"] = text
             self.save_settings()
             self.log(f"Legendary shop reroll: added {key.title()} to the shop ignore list.")
         else:
@@ -7638,6 +8009,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.current_history_run_number = None
         self.last_team_snapshot_signature = None
         self.catch_reroll_used = False
+        self.start_shiny_filter_acquired = False
         self.schedule_active = bool(self.schedule_enabled_var.get())
         self.schedule_index = 0
         self.schedule_progress = [0 for _ in self.task_schedule]
@@ -7649,6 +8021,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.begin_bot_run_token()
         self.stop_event.clear()
         self.current_mode = selected_mode
+        self.update_log_panel_title()
         self.current_dex_target_mode = (
             self.full_run_dex_priority_var.get()
             if self.current_mode == MODE_FULL_RUN
@@ -7702,7 +8075,14 @@ class PokeLikeBotGUI(ctk.CTk):
         self.current_ignore_pokemon = bool(self.ignore_pokemon_var.get())
         self.current_ignore_pokecenter = bool(self.ignore_pokecenter_var.get())
         self.current_shiny_only_pokemon = bool(self.shiny_only_pokemon_var.get())
+        self.current_start_shiny_filter_reroll = bool(self.start_shiny_filter_reroll_var.get())
         self.current_no_tm_move_tutor = bool(self.no_tm_move_tutor_var.get())
+        self.current_boss_combat_item_swap = bool(self.boss_combat_item_swap_var.get())
+        self.current_combat_held_item = self.combat_held_item_var.get().strip()
+        self.current_combat_held_items = self.active_combat_held_item_priority()
+        self.current_prioritize_party_fill = bool(self.prioritize_party_fill_var.get())
+        self.current_delay_party_fill = bool(self.delay_party_fill_var.get())
+        self.current_smart_trait_choice = bool(self.smart_trait_choice_var.get())
         self.current_type_whitelist = self.parse_type_whitelist(self.type_whitelist_var.get())
         self.current_type_filter_mode = (
             self.type_filter_mode_var.get()
@@ -7771,10 +8151,22 @@ class PokeLikeBotGUI(ctk.CTk):
                 self.log(f"Full-run type whitelist: {', '.join(sorted(self.current_type_whitelist))}.")
             if self.current_generation_whitelist:
                 self.log(f"Full-run generation whitelist: {', '.join(sorted(self.current_generation_whitelist))}.")
-        if self.current_ignore_pokecenter:
-            self.log("Full-run route filter enabled: avoiding Pokecenter paths when another route is reachable.")
+            if self.current_smart_trait_choice:
+                self.log("Full-run filter enabled: smart type ability choice.")
+            if self.current_start_shiny_filter_reroll:
+                self.log("Full-run start gate enabled: rerolling until a shiny Pokemon matches active filters.")
+        self.log("Full-run route rule: Pokecenter is lowest priority and only used when unavoidable.")
         if self.current_no_tm_move_tutor:
             self.log("Full-run filter enabled: skipping TMs and move tutor nodes.")
+        if self.current_boss_combat_item_swap and self.current_combat_held_items:
+            self.log(
+                "Full-run boss item swap enabled: "
+                f"{', '.join(self.current_combat_held_items)} for bosses, then restore top held priority."
+            )
+        if self.current_prioritize_party_fill:
+            self.log("Full-run route option enabled: prioritizing catches while party is under 6.")
+        if self.current_delay_party_fill:
+            self.log("Full-run route option enabled: delaying party-fill catch priority until map 3.")
 
         self.start_button.configure(state="disabled")
         self.open_browser_button.configure(state="disabled")
@@ -9040,6 +9432,46 @@ class PokeLikeBotGUI(ctk.CTk):
             return True
         return False
 
+    def click_resume_challenge_if_visible(self):
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                el.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.click();
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+            };
+            const button = document.querySelector('#btn-continue-challenge')
+                || [...document.querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        const cls = (btn.className || '').toString().toLowerCase();
+                        return text.includes('resume challenge')
+                            || cls.includes('title-mode-resume--challenge');
+                    });
+            if (!button || !visible(button)) return {clicked: false};
+            click(button);
+            return {clicked: true, text: (button.innerText || button.textContent || '').trim()};
+            """
+        )
+        if result.get("clicked"):
+            self.resumed_existing_challenge_run = True
+            self.log(f"Existing Challenge run detected; clicked {result.get('text') or 'Resume Challenge'} and will finish it first.")
+            time.sleep(1.0)
+            return True
+        return False
+
     def restart_chrome_if_due(self, worker_id):
         if not self.chrome_restart_minutes or self.chrome_restart_minutes <= 0:
             return False
@@ -9087,12 +9519,19 @@ class PokeLikeBotGUI(ctk.CTk):
             self.prepare_page()
             time.sleep(0.15)
 
+        if self.active_screen_id() in ["title-screen", "challenge-select"] and self.click_resume_challenge_if_visible():
+            return
+
         if self.active_screen_id() in run_screens:
             reroll_mode = (
                 self.current_mode == MODE_SHINY_CHARM_REROLL
                 or self.is_pokemon_reroll_mode()
                 or self.is_complete_pokedex_mode()
             )
+            if not reroll_mode and self.should_use_full_run_logic():
+                self.resumed_existing_challenge_run = True
+                self.log(f"Existing run detected on {self.active_screen_id()}; finishing it before starting the configured run.")
+                return
             self.log("Existing run detected; using in-game reset to preserve login.")
             reset_result = self.driver.execute_script(
                 """
@@ -9219,6 +9658,8 @@ class PokeLikeBotGUI(ctk.CTk):
         if self.active_screen_id() not in ["title-screen", "challenge-select"]:
             self.prepare_page()
             time.sleep(0.15)
+            if self.active_screen_id() in ["title-screen", "challenge-select"] and self.click_resume_challenge_if_visible():
+                return
 
     def is_active_run_screen(self):
         return self.active_screen_id() in [
@@ -9577,8 +10018,13 @@ class PokeLikeBotGUI(ctk.CTk):
         return result
 
     def start_challenge_run(self):
-        self.apply_active_schedule_target()
+        if not getattr(self, "shop_post_hit_safety_run_active", False):
+            self.apply_active_schedule_target()
         self.reset_current_run_if_needed()
+
+        if self.is_active_run_screen() and getattr(self, "resumed_existing_challenge_run", False):
+            self.log(f"Using resumed existing Challenge run; screen={self.active_screen_id()}.")
+            return False
 
         if (
             self.current_mode == MODE_SHINY_CHARM_REROLL
@@ -9653,15 +10099,60 @@ class PokeLikeBotGUI(ctk.CTk):
             """
             const priority = arguments[0].map(name => name.toLowerCase());
             const consumables = new Set(arguments[1].map(name => name.toLowerCase()));
+            const ignored = arguments[2].map(name => name.toLowerCase());
+            const known = arguments[3].map(name => name.toLowerCase());
+            const combatPriority = arguments[4].map(name => name.toLowerCase());
             const normalize = (text) => (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const nameFor = (card) => (
+                card.querySelector('.item-name')?.innerText
+                || card.querySelector('img[alt]')?.getAttribute('alt')
+                || card.querySelector('img[title]')?.getAttribute('title')
+                || ''
+            ).trim();
+            const detailFor = (card) => {
+                const name = nameFor(card).replace(/\\s+/g, ' ').trim();
+                let detail = (card.innerText || card.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (name && detail.toLowerCase().startsWith(name.toLowerCase())) {
+                    detail = detail.slice(name.length).trim();
+                }
+                detail = detail
+                    .replace(/\\b(passive|starting item|held item|item)\\b/ig, ' ')
+                    .replace(/\\s+/g, ' ')
+                    .replace(/^[-:|]+/, '')
+                    .trim();
+                return detail.slice(0, 160);
+            };
             const priorityIndex = (name) => {
                 const norm = normalize(name);
                 const idx = priority.findIndex(alias => norm.includes(alias));
                 return idx < 0 ? null : idx;
             };
-            const isConsumable = (name) => {
+            const priorityMatches = (name) => {
                 const norm = normalize(name);
-                return [...consumables].some(alias => norm.includes(alias));
+                return priority.some(alias => norm.includes(alias));
+            };
+            const combatIndex = (name) => {
+                const norm = normalize(name);
+                const idx = combatPriority.findIndex(alias => norm.includes(alias));
+                return idx < 0 ? null : idx;
+            };
+            const combatMatches = (name) => combatIndex(name) !== null;
+            const ignoredMatches = (name) => {
+                const norm = normalize(name);
+                return !priorityMatches(name) && !combatMatches(name) && ignored.some(alias => norm.includes(alias));
+            };
+            const isRecognized = (name) => {
+                const norm = normalize(name);
+                if (!norm) return false;
+                return priorityMatches(name)
+                    || combatMatches(name)
+                    || ignored.some(alias => norm.includes(alias))
+                    || known.some(alias => norm.includes(alias));
+            };
+            const consumableIndex = (name) => {
+                const norm = normalize(name);
+                const idx = [...consumables].findIndex(alias => norm.includes(alias));
+                return idx < 0 ? null : idx;
             };
             const choiceCards = [...document.querySelectorAll('#item-choices .item-card')]
                 .filter(card => {
@@ -9669,15 +10160,28 @@ class PokeLikeBotGUI(ctk.CTk):
                     return rect.width > 0 && rect.height > 0;
                 });
             const choices = choiceCards.map((card, index) => {
-                const name = (
-                    card.querySelector('.item-name')?.innerText
-                    || card.querySelector('img[alt]')?.getAttribute('alt')
-                    || card.querySelector('img[title]')?.getAttribute('title')
-                    || card.innerText
-                    || ''
-                ).trim();
-                return {index, name, priority: priorityIndex(name), consumable: isConsumable(name)};
+                const name = nameFor(card).replace(/\\s+/g, ' ').slice(0, 80);
+                return {
+                    index,
+                    name,
+                    priority: priorityIndex(name),
+                    combatPriority: combatIndex(name),
+                    consumable: consumableIndex(name) !== null,
+                    consumablePriority: consumableIndex(name),
+                    ignored: ignoredMatches(name),
+                    recognized: isRecognized(name),
+                    detail: detailFor(card)
+                };
             });
+            const itemDetails = choices
+                .filter(choice => choice.name && choice.detail)
+                .map(choice => ({name: choice.name, detail: choice.detail}));
+            const ignoredNames = choices
+                .filter(choice => choice.ignored)
+                .map(choice => choice.name);
+            const unrecognizedNames = choices
+                .filter(choice => !choice.ignored && !choice.recognized)
+                .map(choice => choice.name);
             const ownedRoots = ['#item-bar', '#elite-prep-items', '#item-team-bar', '#catch-team-bar', '#passive-team-bar'];
             const owned = ownedRoots.flatMap(selector => [...document.querySelectorAll(`${selector} img[alt], ${selector} img[title]`)])
                 .concat([...document.querySelectorAll('.team-slot-item img[alt], .team-slot-item img[title], .battle-poke-item img[alt], .battle-poke-item img[title]')])
@@ -9685,25 +10189,72 @@ class PokeLikeBotGUI(ctk.CTk):
                 .filter(Boolean);
             const ownedPriority = owned
                 .map(priorityIndex)
-                .filter(value => value !== null && value < priority.indexOf('rare candy'));
+                .filter(value => value !== null && !choices.some(choice => choice.consumable && choice.priority === value));
             const bestOwnedHeld = ownedPriority.length ? Math.min(...ownedPriority) : null;
+            const ownedCombatPriority = owned
+                .map(name => combatIndex(name))
+                .filter(value => value !== null);
+            const bestOwnedCombat = ownedCombatPriority.length ? Math.min(...ownedCombatPriority) : null;
+
+            const consumableChoices = choices
+                .filter(choice => !choice.ignored && choice.recognized && choice.consumable)
+                .sort((a, b) => {
+                    const ap = a.priority === null ? Number.POSITIVE_INFINITY : a.priority;
+                    const bp = b.priority === null ? Number.POSITIVE_INFINITY : b.priority;
+                    if (ap !== bp) return ap - bp;
+                    return (a.consumablePriority ?? 999) - (b.consumablePriority ?? 999);
+                });
+            if (consumableChoices.length) {
+                const choice = consumableChoices[0];
+                return {take: true, index: choice.index, name: choice.name, reason: 'pickup', owned, offered: choices.map(choice => choice.name), ignoredNames, unrecognizedNames, itemDetails};
+            }
+
+            const combatChoices = choices
+                .filter(choice =>
+                    !choice.ignored
+                    && choice.recognized
+                    && !choice.consumable
+                    && choice.combatPriority !== null
+                    && (bestOwnedCombat === null || choice.combatPriority < bestOwnedCombat)
+                )
+                .sort((a, b) => a.combatPriority - b.combatPriority);
+            if (combatChoices.length) {
+                const choice = combatChoices[0];
+                return {take: true, index: choice.index, name: choice.name, reason: 'combat', owned, offered: choices.map(choice => choice.name), ignoredNames, unrecognizedNames, itemDetails};
+            }
 
             const ranked = choices
-                .filter(choice => choice.priority !== null)
+                .filter(choice => !choice.ignored && choice.recognized && !choice.consumable && choice.priority !== null)
                 .sort((a, b) => a.priority - b.priority);
             for (const choice of ranked) {
-                if (choice.consumable) {
-                    return {take: true, index: choice.index, name: choice.name, reason: 'consumable', owned};
-                }
                 if (bestOwnedHeld === null || choice.priority < bestOwnedHeld) {
-                    return {take: true, index: choice.index, name: choice.name, reason: 'upgrade', owned};
+                    return {take: true, index: choice.index, name: choice.name, reason: 'upgrade', owned, offered: choices.map(choice => choice.name), ignoredNames, unrecognizedNames, itemDetails};
                 }
             }
-            return {take: false, owned, offered: choices.map(choice => choice.name)};
+            return {take: false, owned, offered: choices.map(choice => choice.name), ignoredNames, unrecognizedNames, itemDetails};
             """,
             list(self.active_regular_item_priority()),
-            list(CONSUMABLE_ITEM_ALIASES),
+            [
+                alias for alias in CONSUMABLE_ITEM_ALIASES
+                if not (
+                    getattr(self, "current_no_tm_move_tutor", False)
+                    and self.normalize_item_name(alias) == "tm"
+                )
+            ],
+            self.active_regular_item_ignore() + sorted(self.unknown_regular_items),
+            list(KNOWN_PASSIVE_ITEMS),
+            list(self.active_combat_held_item_priority()),
         )
+        item_details = decision.get("itemDetails") or []
+        ignored_names = decision.get("ignoredNames") or []
+        unrecognized_names = decision.get("unrecognizedNames") or []
+        if item_details:
+            self.record_passive_item_details(item_details)
+        if unrecognized_names:
+            self.log("Unrecognized held item(s) -> don't pick: " + ", ".join(unrecognized_names))
+            self.record_unknown_regular_items(unrecognized_names)
+        if ignored_names:
+            self.log("Ignored held item(s): " + ", ".join(ignored_names))
         if not decision.get("take"):
             self.skip_item_choice()
             offered = ", ".join(decision.get("offered") or names)
@@ -11281,21 +11832,34 @@ class PokeLikeBotGUI(ctk.CTk):
             const button = buttons.find(btn => {
                 const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
                 const id = (btn.id || '').toLowerCase();
+                const cls = (btn.className || '').toString().toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+                const tip = (btn.getAttribute('data-tip') || '').trim().toLowerCase();
                 return id === 'btn-home'
                     || id === 'btn-stage-home'
                     || id === 'btn-title'
+                    || btn.getAttribute('onclick') === 'goHomeFromMenu()'
+                    || cls.includes('nav-in-run')
+                    || aria === 'home'
+                    || tip === 'home'
                     || text === 'home'
                     || text.includes('back home')
                     || text.includes('main menu');
             });
-            if (!button) return {clicked: false};
-            button.scrollIntoView({block: 'center', inline: 'center'});
-            button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
-            button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-            button.click();
-            button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
-            button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
-            return {clicked: true, text: (button.innerText || button.textContent || '').trim()};
+            if (button) {
+                button.scrollIntoView({block: 'center', inline: 'center'});
+                button.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                button.click();
+                button.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                button.dispatchEvent(new MouseEvent('pointerup', {bubbles: true}));
+                return {clicked: true, text: (button.innerText || button.textContent || button.getAttribute('aria-label') || 'Home').trim()};
+            }
+            if (typeof window.goHomeFromMenu === 'function') {
+                window.goHomeFromMenu();
+                return {clicked: true, text: 'Home'};
+            }
+            return {clicked: false};
             """
         )
         if result.get("clicked"):
@@ -11577,8 +12141,8 @@ class PokeLikeBotGUI(ctk.CTk):
                 f"picked {result.get('name') or 'first visible item'} to continue the run."
             )
         # A passive item is offered once per map (start of each Tower/Challenge
-        # map), so a successful pick marks entering a new map. Used to re-enable
-        # catching from map 3 onward (see prioritize_party_fill in pick_map_node).
+        # map), so a successful pick marks entering a new map. Used by the
+        # optional map-3 party-fill delay in pick_map_node().
         self.maps_started += 1
         if result.get("target"):
             self.pending_passive_item_name = result.get("name") or ""
@@ -11934,14 +12498,16 @@ class PokeLikeBotGUI(ctk.CTk):
 
         party = self.party_summary()
         party_count = int(party.get("count") or 0)
-        # Catch-avoidance: no catching on the first two maps, then resume.
-        # Story mode advances maps via badges (maps_reached increments on the
-        # badge screen); Battle Tower / Challenge advance via the per-map
-        # passive-item pick (maps_started). Reaching map 3 by either signal
-        # re-enables party fill / catching.
-        prioritize_party_fill = self.maps_reached >= 2 or self.maps_started >= 3
+        if not getattr(self, "current_prioritize_party_fill", True):
+            prioritize_party_fill = False
+        elif getattr(self, "current_delay_party_fill", False):
+            # Optional legacy behavior: do not bias route selection toward
+            # party-fill catches until map 3.
+            prioritize_party_fill = self.maps_reached >= 2 or self.maps_started >= 3
+        else:
+            prioritize_party_fill = True
         avoid_pokemon = bool(getattr(self, "current_ignore_pokemon", False))
-        avoid_pokecenter = bool(getattr(self, "current_ignore_pokecenter", False))
+        avoid_pokecenter = True
         avoid_tm_move_tutor = bool(getattr(self, "current_no_tm_move_tutor", False))
         needs_move_tutor = self.main_move_upgrades_used < MAIN_MOVE_TARGET_USES and not avoid_tm_move_tutor
         node_by_index = {node["index"]: node for node in route.get("nodes", [])}
@@ -11967,9 +12533,9 @@ class PokeLikeBotGUI(ctk.CTk):
         def route_bonus(node):
             kinds = reachable_kinds(node["index"])
             penalty = 0
-            if avoid_pokecenter and "poke-center" in kinds:
-                penalty += 250
-            if avoid_pokemon and ({"legendary", "pokeball", "grass"} & kinds):
+            if "poke-center" in kinds:
+                penalty += 1000
+            if avoid_pokemon and ({"legendary", "pokeball"} & kinds):
                 penalty += 350
             if avoid_tm_move_tutor and "move-tutor" in kinds:
                 penalty += 175
@@ -11981,10 +12547,10 @@ class PokeLikeBotGUI(ctk.CTk):
 
         def score(node):
             kind = node.get("kind") or "other"
-            if avoid_pokemon and kind in {"legendary", "pokeball", "grass"}:
+            if avoid_pokemon and kind in {"legendary", "pokeball"}:
                 base = 500
-            elif avoid_pokecenter and kind == "poke-center":
-                base = 450
+            elif kind == "poke-center":
+                base = 1000
             elif avoid_tm_move_tutor and kind == "move-tutor":
                 base = 425
             elif kind == "legendary":
@@ -11995,8 +12561,6 @@ class PokeLikeBotGUI(ctk.CTk):
                 base = 2
             elif prioritize_party_fill and party_count < 6 and kind == "pokeball":
                 base = 3
-            elif prioritize_party_fill and party_count < 6 and kind == "grass":
-                base = 4
             elif kind == "grass":
                 base = 3
             elif kind == "question":
@@ -12016,22 +12580,20 @@ class PokeLikeBotGUI(ctk.CTk):
             return (base + route_bonus(node), 0)
 
         # If the visible map has any route that avoids disabled content, filter to
-        # that subset. Some maps can force a Pokecenter or catch branch; in those
-        # cases the score penalty still picks the least-bad route instead of
-        # stalling.
+        # that subset. Pokecenter is always lowest priority and only used when
+        # every reachable route forces it.
         filtered_nodes = nodes
-        if avoid_pokecenter:
-            without_center = [
-                node for node in filtered_nodes
-                if node.get("kind") != "poke-center" and "poke-center" not in reachable_kinds(node["index"])
-            ]
-            if without_center:
-                filtered_nodes = without_center
+        without_center = [
+            node for node in filtered_nodes
+            if node.get("kind") != "poke-center" and "poke-center" not in reachable_kinds(node["index"])
+        ]
+        if without_center:
+            filtered_nodes = without_center
         if avoid_pokemon:
             without_pokemon = [
                 node for node in filtered_nodes
-                if node.get("kind") not in {"legendary", "pokeball", "grass"}
-                and not ({"legendary", "pokeball", "grass"} & reachable_kinds(node["index"]))
+                if node.get("kind") not in {"legendary", "pokeball"}
+                and not ({"legendary", "pokeball"} & reachable_kinds(node["index"]))
             ]
             if without_pokemon:
                 filtered_nodes = without_pokemon
@@ -12045,10 +12607,10 @@ class PokeLikeBotGUI(ctk.CTk):
 
         # Tie-break downward to make steady progress toward the leader.
         chosen = sorted(filtered_nodes, key=lambda node: (*score(node), -node["y"]))[0]
-        if avoid_pokemon and chosen.get("kind") in {"legendary", "pokeball", "grass"}:
+        if avoid_pokemon and chosen.get("kind") in {"legendary", "pokeball"}:
             self.log("Map route: Pokemon avoidance is enabled, but this map appears to force a Pokemon route.")
-        elif avoid_pokecenter and chosen.get("kind") == "poke-center":
-            self.log("Map route: Pokecenter avoidance is enabled, but this map appears to force Pokecenter.")
+        elif chosen.get("kind") == "poke-center":
+            self.log("Map route: Pokecenter is forced; no reachable route avoids it.")
         elif avoid_tm_move_tutor and chosen.get("kind") == "move-tutor":
             self.log("Map route: TM/move-tutor avoidance is enabled, but this map appears to force move tutor.")
         elif chosen.get("kind") == "legendary":
@@ -12058,7 +12620,7 @@ class PokeLikeBotGUI(ctk.CTk):
         elif needs_move_tutor and (chosen.get("kind") == "move-tutor" or route_bonus(chosen) <= -200):
             self.log(f"Map route: choosing path toward move tutor ({self.main_move_upgrades_used}/{MAIN_MOVE_TARGET_USES}).")
         elif prioritize_party_fill and party_count < 6 and chosen.get("kind") == "pokeball":
-            self.log(f"Map route: map {self.maps_reached + 1}; party has {party_count}/6 Pokemon; prioritizing pokeball over grass.")
+            self.log(f"Map route: map {self.maps_reached + 1}; party has {party_count}/6 Pokemon; prioritizing pokeball catch node.")
         return chosen
 
     def wait_for_catch_map_node(self, timeout=2.0):
@@ -12479,6 +13041,162 @@ class PokeLikeBotGUI(ctk.CTk):
             return True
         return False
 
+    def equip_visible_held_item_on_starter(self, item_name, label):
+        item_name = str(item_name or "").strip()
+        if not item_name:
+            return False
+
+        def click_item_badge():
+            return self.driver.execute_script(
+                """
+                const targetName = String(arguments[0] || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                const click = (el) => {
+                    el.scrollIntoView({block: 'center', inline: 'center'});
+                    const rect = el.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2;
+                    const y = rect.top + rect.height / 2;
+                    const target = document.elementFromPoint(x, y) || el;
+                    for (const node of [...new Set([target, el])]) {
+                        node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.click();
+                        node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    }
+                };
+                const roots = [
+                    '#elite-prep-items .item-badge',
+                    '#item-bar .item-badge',
+                    '#item-team-bar .item-badge',
+                    '#catch-team-bar .item-badge',
+                    '#passive-team-bar .item-badge',
+                    '.screen.active .item-badge'
+                ].join(',');
+                const badges = [...document.querySelectorAll(roots)].filter(visible);
+                const badgeName = (badge) => normalize([
+                    badge.innerText || badge.textContent || '',
+                    badge.getAttribute('aria-label') || '',
+                    badge.getAttribute('title') || '',
+                    badge.dataset?.item || '',
+                    badge.dataset?.name || '',
+                    ...[...badge.querySelectorAll('img')].map(img => [
+                        img.getAttribute('alt') || '',
+                        img.getAttribute('title') || '',
+                        img.getAttribute('src') || ''
+                    ].join(' '))
+                ].join(' '));
+                const badge = badges.find(candidate => {
+                    const name = badgeName(candidate);
+                    return name && (name === targetName || name.includes(targetName) || targetName.includes(name));
+                });
+                if (!badge) {
+                    return {clicked: false, reason: 'item badge not visible', visibleItems: badges.map(badgeName).filter(Boolean).slice(0, 12)};
+                }
+                click(badge);
+                return {clicked: true};
+                """,
+                item_name,
+            )
+
+        def click_starter_row():
+            return self.driver.execute_script(
+                """
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const click = (el) => {
+                    el.scrollIntoView({block: 'center', inline: 'center'});
+                    const rect = el.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2;
+                    const y = rect.top + rect.height / 2;
+                    const target = document.elementFromPoint(x, y) || el;
+                    for (const node of [...new Set([target, el])]) {
+                        node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.click();
+                        node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    }
+                };
+                const rows = [...document.querySelectorAll('#item-equip-modal .equip-pokemon-row, .equip-pokemon-row')]
+                    .filter(visible)
+                    .sort((a, b) => {
+                        const ai = parseInt(a.getAttribute('data-idx') || '999', 10);
+                        const bi = parseInt(b.getAttribute('data-idx') || '999', 10);
+                        return ai - bi;
+                    });
+                const row = rows.find(candidate => (candidate.getAttribute('data-idx') || '') === '0') || rows[0];
+                if (!row) return {clicked: false};
+                const button = [...row.querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        return text.includes('equip') || text.includes('use') || text.includes('select') || text.includes('swap');
+                    });
+                const target = button || row;
+                const pokemon = row.querySelector('.equip-poke-name')?.innerText || row.innerText || 'starter';
+                click(target);
+                return {clicked: true, pokemon: pokemon.trim(), targetText: (target.innerText || target.textContent || '').trim()};
+                """
+            )
+
+        clicked_badge = click_item_badge()
+        if not clicked_badge.get("clicked"):
+            return False
+        result = None
+        deadline = time.time() + 1.2
+        while time.time() < deadline and not self.stop_event.is_set():
+            result = click_starter_row()
+            if result.get("clicked"):
+                break
+            time.sleep(0.08)
+        if not result or not result.get("clicked"):
+            self.log(f"{label}: clicked {item_name}, but no starter equip row appeared.")
+            return False
+        self.log(f"{label}: equipped {item_name} on {result.get('pokemon') or 'starter'}.")
+        time.sleep(0.45)
+        return True
+
+    def handle_boss_combat_item_swap(self):
+        if not (
+            self.should_use_full_run_logic()
+            and getattr(self, "current_boss_combat_item_swap", False)
+            and getattr(self, "current_combat_held_items", [])
+        ):
+            return False
+        if getattr(self, "boss_combat_item_equipped", False):
+            return False
+        for item_name in self.current_combat_held_items:
+            if self.equip_visible_held_item_on_starter(item_name, "Boss item swap"):
+                self.boss_combat_item_equipped = True
+                return True
+        return False
+
+    def restore_boss_combat_item_if_needed(self):
+        if not getattr(self, "boss_combat_item_equipped", False):
+            return False
+        restore_item = self.active_restore_held_item()
+        if not restore_item:
+            return False
+        if self.equip_visible_held_item_on_starter(restore_item, "Boss item restore"):
+            self.boss_combat_item_equipped = False
+            return True
+        return False
+
     def use_rare_candy_on_starter_if_available(self):
         click_script = """
             const el = arguments[0];
@@ -12574,6 +13292,172 @@ class PokeLikeBotGUI(ctk.CTk):
         time.sleep(0.45)
         return True
         return False
+
+    def use_sacred_ash_on_fainted_starter_if_available(self):
+        if not self.should_use_full_run_logic():
+            return False
+        screen = self.active_screen_id()
+        if screen in {"battle-screen", "badge-screen", "elite-prep-screen"}:
+            return False
+        if bool(getattr(self, "awaiting_leader_item_roll", False)):
+            return False
+
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const normalize = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            const click = (el) => {
+                el.scrollIntoView({block: 'center', inline: 'center'});
+                const rect = el.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const target = document.elementFromPoint(x, y) || el;
+                for (const node of [...new Set([target, el])]) {
+                    node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.click();
+                    node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                    node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                }
+            };
+            const itemBadgeName = (badge) => normalize([
+                badge.innerText || badge.textContent || '',
+                badge.getAttribute('aria-label') || '',
+                badge.getAttribute('title') || '',
+                badge.dataset?.item || '',
+                badge.dataset?.name || '',
+                ...[...badge.querySelectorAll('img')].map(img => [
+                    img.getAttribute('alt') || '',
+                    img.getAttribute('title') || '',
+                    img.getAttribute('src') || ''
+                ].join(' '))
+            ].join(' '));
+            const sacredAsh = [...document.querySelectorAll([
+                '#item-bar .item-badge',
+                '#item-team-bar .item-badge',
+                '#catch-team-bar .item-badge',
+                '#passive-team-bar .item-badge',
+                '.screen.active .item-badge'
+            ].join(','))]
+                .filter(visible)
+                .find(badge => {
+                    const name = itemBadgeName(badge);
+                    return name.includes('sacred ash') || name.includes('sacred ash png');
+                });
+            if (!sacredAsh) return {clicked: false, reason: 'no sacred ash'};
+
+            const teamSlots = [...document.querySelectorAll([
+                '#team-bar .team-slot',
+                '#map-team-bar .team-slot',
+                '#catch-team-bar .team-slot',
+                '#item-team-bar .team-slot',
+                '#passive-team-bar .team-slot',
+                '.screen.active .team-slot'
+            ].join(','))]
+                .filter(visible)
+                .sort((a, b) => {
+                    const ai = parseInt(a.getAttribute('data-idx') || a.dataset?.idx || '999', 10);
+                    const bi = parseInt(b.getAttribute('data-idx') || b.dataset?.idx || '999', 10);
+                    return ai - bi;
+                });
+            const starterSlot = teamSlots.find(slot => (slot.getAttribute('data-idx') || slot.dataset?.idx || '') === '0') || teamSlots[0];
+            if (!starterSlot) return {clicked: false, reason: 'no starter slot'};
+            const slotText = normalize(starterSlot.innerText || starterSlot.textContent || '');
+            const slotClass = normalize(starterSlot.className || '');
+            const hpText = [
+                starterSlot.querySelector('.hp, .team-slot-hp, .poke-hp, [class*="hp"]')?.innerText || '',
+                starterSlot.getAttribute('aria-label') || '',
+                starterSlot.getAttribute('title') || ''
+            ].join(' ');
+            const hpZero = /(^|\\D)0\\s*\\/\\s*[1-9][0-9]*/.test(hpText);
+            const fainted = slotText.includes('fainted')
+                || slotText.includes('ko')
+                || slotClass.includes('fainted')
+                || slotClass.includes('ko')
+                || starterSlot.classList.contains('fainted')
+                || starterSlot.classList.contains('is-fainted')
+                || !!starterSlot.querySelector('.fainted, .is-fainted, [class*="fainted"]')
+                || hpZero;
+            if (!fainted) return {clicked: false, reason: 'starter not fainted'};
+            const starterName = (
+                starterSlot.querySelector('.team-slot-name, .poke-name, .battle-poke-name')?.innerText
+                || starterSlot.querySelector('img[alt]')?.getAttribute('alt')
+                || 'starter'
+            ).trim();
+            click(sacredAsh);
+            return {clicked: true, starterName};
+            """
+        )
+        if not result.get("clicked"):
+            return False
+
+        def click_starter_row():
+            return self.driver.execute_script(
+                """
+                const visible = (el) => {
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = getComputedStyle(el);
+                    return rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const click = (el) => {
+                    el.scrollIntoView({block: 'center', inline: 'center'});
+                    const rect = el.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2;
+                    const y = rect.top + rect.height / 2;
+                    const target = document.elementFromPoint(x, y) || el;
+                    for (const node of [...new Set([target, el])]) {
+                        node.dispatchEvent(new MouseEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.click();
+                        node.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+                        node.dispatchEvent(new MouseEvent('pointerup', {bubbles: true, clientX: x, clientY: y}));
+                    }
+                };
+                const rows = [...document.querySelectorAll('#item-equip-modal .equip-pokemon-row, .equip-pokemon-row')]
+                    .filter(visible)
+                    .sort((a, b) => {
+                        const ai = parseInt(a.getAttribute('data-idx') || '999', 10);
+                        const bi = parseInt(b.getAttribute('data-idx') || '999', 10);
+                        return ai - bi;
+                    });
+                const row = rows.find(candidate => (candidate.getAttribute('data-idx') || '') === '0') || rows[0];
+                if (!row) return {clicked: false};
+                const button = [...row.querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                        return text.includes('use') || text.includes('select') || text.includes('revive') || text.includes('restore');
+                    });
+                const target = button || row;
+                const pokemon = row.querySelector('.equip-poke-name')?.innerText || row.innerText || 'starter';
+                click(target);
+                return {clicked: true, pokemon: pokemon.trim()};
+                """
+            )
+
+        used = None
+        deadline = time.time() + 1.2
+        while time.time() < deadline and not self.stop_event.is_set():
+            used = click_starter_row()
+            if used.get("clicked"):
+                break
+            time.sleep(0.08)
+        if not used or not used.get("clicked"):
+            self.log("Sacred Ash: clicked item, but no starter target picker appeared.")
+            return False
+        self.log(f"Sacred Ash: revived/restored {used.get('pokemon') or result.get('starterName') or 'starter'}.")
+        time.sleep(0.45)
+        return True
 
     def use_moon_stone_on_target_if_available(self):
         target_names = []
@@ -12871,6 +13755,71 @@ class PokeLikeBotGUI(ctk.CTk):
     def handle_target_normal_catch(self):
         return self.handle_target_pokemon_catch(target_shiny=False)
 
+    def click_catch_skip_if_available(self):
+        result = self.driver.execute_script(
+            """
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const active = document.querySelector('#catch-screen.screen.active, #catch-screen, .screen.active') || document;
+            const buttons = [...active.querySelectorAll([
+                '#btn-flee',
+                '#btn-skip-catch',
+                '#btn-skip-pokemon',
+                '.choice-skip-btn',
+                '.choice-skip-cell',
+                '[data-action="flee"]',
+                '[data-action="skip"]',
+                'button',
+                '[role="button"]'
+            ].join(','))].filter(visible);
+            const button = buttons.find(btn => {
+                const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                const id = (btn.id || '').toLowerCase();
+                const cls = String(btn.className || '').toLowerCase();
+                return id.includes('flee')
+                    || id.includes('skip')
+                    || cls.includes('flee')
+                    || cls.includes('skip')
+                    || text.includes('flee')
+                    || text.includes('skip')
+                    || text.includes('decline')
+                    || text.includes('leave');
+            });
+            if (!button) {
+                return {
+                    clicked: false,
+                    buttons: buttons.map(btn => (btn.innerText || btn.textContent || btn.id || '').trim()).filter(Boolean).slice(0, 8)
+                };
+            }
+            button.scrollIntoView({block: 'center', inline: 'center'});
+            const rect = button.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const target = document.elementFromPoint(x, y) || button;
+            for (const el of [...new Set([target, button])]) {
+                el.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true}));
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1}));
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 0}));
+                el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 0}));
+                el.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true}));
+            }
+            if (typeof button.click === 'function') button.click();
+            return {clicked: true, text: (button.innerText || button.textContent || button.id || 'flee').trim()};
+            """
+        )
+        if result.get("clicked"):
+            self.log(f"Catch screen: skipped/fled ({result.get('text') or 'skip'}).")
+            time.sleep(0.6)
+            return True
+        self.log(f"Catch screen: no skip/flee button found. Visible actions: {result.get('buttons') or 'none'}.")
+        return False
+
     def choose_priority_catch(self):
         def click_priority_choice(immediate_only=False):
             return self.driver.execute_script(
@@ -12881,8 +13830,11 @@ class PokeLikeBotGUI(ctk.CTk):
                 const dexPriorityNames = new Set(arguments[3].map(name => name.toLowerCase()));
                 const dexTargetMode = arguments[4] || 'Off';
                 const filters = arguments[5] || {};
+                const allTypeNames = new Set((arguments[6] || []).map(name => String(name || '').toLowerCase()));
                 const ignorePokemon = !!filters.ignorePokemon;
                 const shinyOnly = !!filters.shinyOnly;
+                const smartTraitChoice = !!filters.smartTraitChoice;
+                const startShinyGate = !!filters.startShinyGate;
                 const manualNames = new Set((filters.manualNames || []).map(name => String(name).toLowerCase()));
                 const typeNames = new Set((filters.typeNames || []).map(name => String(name).toLowerCase()));
                 const generationNames = new Set((filters.generationNames || []).map(name => String(name).toLowerCase()));
@@ -12890,10 +13842,11 @@ class PokeLikeBotGUI(ctk.CTk):
                 const typeMode = filters.typeMode || 'Prioritize';
                 const whitelistMode = filters.whitelistMode || 'Only whitelist';
                 const generationWhitelist = new Set((filters.generationWhitelist || []).map(name => String(name).toLowerCase()));
+                const partyCount = Math.min(Number(filters.partyCount || 0), 6);
                 const matchAnyPriorityName = priorityNames.length === 0;
-                const hardWhitelist = manualNames.size && whitelistMode !== 'Prioritize whitelist';
-                const hardType = typeWhitelist.size && typeMode === 'Only';
-                const filtersActive = ignorePokemon || shinyOnly || hardWhitelist || hardType || generationWhitelist.size;
+                const hardWhitelist = manualNames.size && (startShinyGate || whitelistMode !== 'Prioritize whitelist');
+                const hardType = typeWhitelist.size && (startShinyGate || typeMode === 'Only');
+                const filtersActive = ignorePokemon || shinyOnly || startShinyGate || hardWhitelist || hardType || generationWhitelist.size;
                 const visible = (el) => {
                     const rect = el.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0;
@@ -12905,7 +13858,83 @@ class PokeLikeBotGUI(ctk.CTk):
                         norm.includes(`${typeName} type`) || norm.split(' ').includes(typeName)
                     );
                 };
-                const cards = [...document.querySelectorAll('#catch-choices .poke-card, #catch-choices [role="button"], .catch-card')]
+                const visibleTraits = () => {
+                    if (!smartTraitChoice) return [];
+                    return [...document.querySelectorAll('#endless-trait-panel .trait-row, .map-panel-traits .trait-row')]
+                        .filter(visible)
+                        .map(row => {
+                            const badge = row.querySelector('.type-badge');
+                            const typeText = normalize(badge?.innerText || badge?.textContent || '');
+                            const classText = String(badge?.className || '').toLowerCase();
+                            const typeName = [...allTypeNames].find(typeName =>
+                                typeText === typeName || classText.split(/\s+/).includes(`type-${typeName}`)
+                            );
+                            const countText = (row.querySelector('.trait-count')?.innerText || row.querySelector('.trait-count')?.textContent || '').trim();
+                            const match = countText.match(/(\\d+)\\s*\\/\\s*(\\d+)(?:\\s*T(\\d+))?/i);
+                            if (!typeName || !match) return null;
+                            return {
+                                typeName,
+                                count: Number(match[1]) || 0,
+                                needed: Number(match[2]) || 0,
+                                tier: Number(match[3]) || 0,
+                                inactive: row.classList.contains('trait-row-inactive'),
+                                label: `${typeName} ${countText}`
+                            };
+                        })
+                        .filter(trait => trait && trait.needed > 0);
+                };
+                const traitRows = visibleTraits();
+                const whitelistTraitCount = traitRows
+                    .filter(row => typeWhitelist.has(row.typeName))
+                    .reduce((total, row) => total + Math.max(Number(row.count) || 0, 0), 0);
+                const whitelistTargetFor = (detectedTypes, shiny) => {
+                    if (!typeWhitelist.size) return 0;
+                    const matchesWhitelist = [...detectedTypes].some(typeName => typeWhitelist.has(typeName));
+                    return (whitelistTraitCount >= 5 || (matchesWhitelist && shiny)) ? 6 : 4;
+                };
+                const canStillHitWhitelistTarget = (detectedTypes, shiny) => {
+                    if (!typeWhitelist.size) return true;
+                    const matchesWhitelist = [...detectedTypes].some(typeName => typeWhitelist.has(typeName));
+                    const contribution = matchesWhitelist ? (shiny ? 2 : 1) : 0;
+                    const targetPoints = whitelistTargetFor(detectedTypes, shiny);
+                    const projectedWhitelistPoints = Math.min(6, whitelistTraitCount + contribution);
+                    const projectedPartyCount = Math.min(6, partyCount + 1);
+                    const remainingSlots = Math.max(6 - projectedPartyCount, 0);
+                    return projectedWhitelistPoints + remainingSlots >= targetPoints;
+                };
+                const typeSourcesFor = (card) => {
+                    const directTypeBadges = [...card.querySelectorAll('.poke-types .type-badge, .dex-types .type-badge')];
+                    if (directTypeBadges.length) return directTypeBadges;
+                    return [
+                        ...card.querySelectorAll('.type-badge:not(.move-type-badge), .poke-types [class*="type-"], .dex-types [class*="type-"]')
+                    ];
+                };
+                const detectedTypesFor = (card) => {
+                    const detected = new Set();
+                    for (const el of typeSourcesFor(card)) {
+                        const classText = String(el.className || '').toLowerCase();
+                        const text = [
+                            el.innerText || el.textContent || '',
+                            el.getAttribute?.('aria-label') || '',
+                            el.getAttribute?.('title') || '',
+                            el.getAttribute?.('alt') || ''
+                        ].join(' ');
+                        const normText = normalize(text);
+                        for (const typeName of allTypeNames) {
+                            if (
+                                classText.split(/\s+/).includes(`type-${typeName}`)
+                                || normText === typeName
+                                || normText.includes(`${typeName} type`)
+                                || normText.split(' ').includes(typeName)
+                            ) {
+                                detected.add(typeName);
+                            }
+                        }
+                    }
+                    return detected;
+                };
+                const cards = [...new Set([...document.querySelectorAll('#catch-choices .poke-card, #catch-choices [role="button"], .catch-card')]
+                    .map(el => el.closest('.poke-card, .catch-card') || el))]
                     .filter(visible);
                 if (!cards.length) return {clicked: false, reason: 'none'};
                 const infoFor = (card, index) => {
@@ -12933,20 +13962,80 @@ class PokeLikeBotGUI(ctk.CTk):
                         || src.includes('/shiny/')
                         || text.includes('shiny');
                     const nameKey = normalize(name || alt);
+                    const detectedTypes = detectedTypesFor(card);
                     const typeAllowed = !typeWhitelist.size
                         || typeNames.has(nameKey)
+                        || [...detectedTypes].some(typeName => typeWhitelist.has(typeName))
                         || typeFromText(`${name} ${alt} ${text} ${src}`);
                     const generationAllowed = !generationWhitelist.size || generationNames.has(nameKey);
                     const manualMatched = manualNames.has(nameKey);
                     const manualAllowed = !manualNames.size
-                        || whitelistMode === 'Prioritize whitelist'
+                        || (!startShinyGate && whitelistMode === 'Prioritize whitelist')
                         || manualMatched
                         || (whitelistMode === 'Only whitelist + shiny' && shiny);
                     const typeMatched = typeAllowed && typeWhitelist.size;
+                    const reserveAllowed = canStillHitWhitelistTarget(detectedTypes, shiny);
+                    const smartReserveCandidate = smartTraitChoice
+                        && !startShinyGate
+                        && shiny
+                        && reserveAllowed;
                     const filterAllowed = !ignorePokemon
                         && (!shinyOnly || shiny)
+                        && (!startShinyGate || shiny)
                         && manualAllowed
-                        && (!hardType || typeAllowed)
+                        && (!hardType || typeAllowed || smartReserveCandidate)
+                        && reserveAllowed
+                        && generationAllowed;
+                    const traitContribution = shiny ? 2 : 1;
+                    let smartTraitScore = 0;
+                    let smartTraitReason = '';
+                    if (smartTraitChoice && detectedTypes.size) {
+                        const reasons = [];
+                        const whitelistMatches = [...detectedTypes].filter(typeName => typeWhitelist.has(typeName)).length;
+                        const whitelistTargetPoints = whitelistTargetFor(detectedTypes, shiny);
+                        if (whitelistMatches > 0 && whitelistTraitCount < whitelistTargetPoints) {
+                            const contribution = shiny ? 2 : 1;
+                            smartTraitScore += 900 + contribution * 180;
+                            reasons.push(`whitelist trait target ${Math.min(6, whitelistTraitCount + contribution)}/${whitelistTargetPoints}`);
+                        }
+                        for (const typeName of detectedTypes) {
+                            const trait = traitRows.find(row => row.typeName === typeName);
+                            if (!trait) {
+                                const newTraitScore = shiny ? 225 : 25;
+                                smartTraitScore += newTraitScore;
+                                reasons.push(shiny ? `new shiny ${typeName} trait` : `new ${typeName} trait`);
+                                continue;
+                            }
+                            const remaining = Math.max(trait.needed - trait.count, 0);
+                            let score = 100 + traitContribution * 40 + trait.tier * 80;
+                            if (trait.inactive) score += 40;
+                            let nextText = ' improves trait';
+                            if (remaining > 0 && traitContribution >= remaining) {
+                                score += 700 + trait.tier * 160;
+                                nextText = ' completes next trait tier';
+                            } else if (remaining > 0) {
+                                score += Math.round((traitContribution / remaining) * 220);
+                            } else {
+                                score += 260 + trait.tier * 120;
+                                nextText = ' reinforces active trait';
+                            }
+                            if (shiny) score += 140;
+                            if (typeWhitelist.has(typeName)) score += 90;
+                            smartTraitScore += score;
+                            reasons.push(`${typeName}${nextText} (${trait.count}+${traitContribution}/${trait.needed}${trait.tier ? ` T${trait.tier}` : ''})`);
+                        }
+                        if (whitelistMatches > 0) {
+                            smartTraitScore += whitelistMatches * 120;
+                        }
+                        smartTraitReason = reasons.slice(0, 2).join('; ');
+                    }
+                    const smartTraitAllowed = smartTraitChoice
+                        && !startShinyGate
+                        && !ignorePokemon
+                        && shiny
+                        && smartTraitScore > 0
+                        && reserveAllowed
+                        && manualAllowed
                         && generationAllowed;
                     const dexAllowed = !dexPriorityName
                         ? false
@@ -12963,7 +14052,12 @@ class PokeLikeBotGUI(ctk.CTk):
                         manualPriorityName,
                         dexPriorityName: dexAllowed,
                         filterAllowed,
+                        smartTraitAllowed,
+                        reserveAllowed,
                         typePriority: typeMatched,
+                        detectedTypes: [...detectedTypes],
+                        smartTraitScore,
+                        smartTraitReason,
                         shiny,
                         legendary: normalizedText.includes('legendary')
                             || [...legendaryNames].some(legendary => nameLower === legendary || alt === legendary || normalizedText.includes(legendary))
@@ -12975,14 +14069,15 @@ class PokeLikeBotGUI(ctk.CTk):
                 const names = infos.map(info => `${info.index + 1}:${info.name || 'unknown'} shiny=${info.shiny}`).join(' | ');
                 const signature = infos.map(info => `${info.index}:${info.name || 'unknown'}:${info.shiny}`).join('|');
                 const selectable = filtersActive
-                    ? (ignorePokemon ? [] : infos.filter(info => info.filterAllowed || info.dexPriorityName))
+                    ? (ignorePokemon ? [] : infos.filter(info => info.filterAllowed || info.dexPriorityName || info.smartTraitAllowed))
                     : infos;
                 if (!selectable.length) {
                     return {
                         clicked: false,
                         filteredOut: true,
                         reason: ignorePokemon ? 'ignore pokemon' : 'filters',
-                        offered: infos.map(info => `${info.name || 'unknown'}:${info.shiny ? 'shiny' : info.legendary ? 'legendary' : 'other'}`),
+                        offered: infos.map(info => `${info.name || 'unknown'}:${!info.reserveAllowed ? 'reserve-full' : info.shiny ? 'shiny' : info.legendary ? 'legendary' : info.detectedTypes.length ? `type=${info.detectedTypes.join('/')}` : 'other'}`),
+                        startShinyGate,
                         checked: infos.length,
                         targetCount,
                         shinyNames,
@@ -12991,24 +14086,27 @@ class PokeLikeBotGUI(ctk.CTk):
                     };
                 }
                 const selected = selectable.find(info => info.dexPriorityName)
+                    || selectable.filter(info => info.smartTraitScore > 0).sort((a, b) => b.smartTraitScore - a.smartTraitScore)[0]
                     || selectable.find(info => info.shiny)
                     || selectable.find(info => info.legendary)
                     || selectable.find(info => info.priorityName)
                     || selectable.find(info => info.typePriority)
                     || selectable[0];
                 const reason = selected.dexPriorityName ? 'dex target'
+                    : startShinyGate ? 'start shiny filter'
+                    : selected.smartTraitScore > 0 ? `smart trait: ${selected.smartTraitReason}`
                     : selected.shiny ? 'shiny'
                     : selected.legendary ? 'legendary'
                     : selected.priorityName ? 'pokemon list'
                     : selected.typePriority ? 'type'
                     : 'random';
-                if (immediateOnly && reason !== 'dex target' && reason !== 'pokemon list' && reason !== 'shiny' && reason !== 'legendary' && reason !== 'type') {
+                if (immediateOnly && reason !== 'dex target' && reason !== 'start shiny filter' && !reason.startsWith('smart trait:') && reason !== 'pokemon list' && reason !== 'shiny' && reason !== 'legendary' && reason !== 'type') {
                     return {
                         clicked: false,
                         deferred: true,
                         name: selected.name,
                         reason,
-                        offered: infos.map(info => `${info.name || 'unknown'}:${info.dexPriorityName ? 'dex' : info.priorityName ? 'list' : info.shiny ? 'shiny' : info.typePriority ? 'type' : 'other'}`),
+                        offered: infos.map(info => `${info.name || 'unknown'}:${!info.reserveAllowed ? 'reserve-full' : info.dexPriorityName ? 'dex' : info.smartTraitScore > 0 ? `trait=${info.smartTraitScore}` : info.priorityName ? 'list' : info.shiny ? 'shiny' : info.detectedTypes.length ? `type=${info.detectedTypes.join('/')}` : 'other'}`),
                         checked: infos.length,
                         targetCount,
                         shinyNames,
@@ -13027,12 +14125,13 @@ class PokeLikeBotGUI(ctk.CTk):
                     clicked: true,
                     name: selected.name,
                     reason,
-                    offered: infos.map(info => `${info.name || 'unknown'}:${info.dexPriorityName ? 'dex' : info.priorityName ? 'list' : info.shiny ? 'shiny' : info.typePriority ? 'type' : 'other'}`),
+                    offered: infos.map(info => `${info.name || 'unknown'}:${!info.reserveAllowed ? 'reserve-full' : info.dexPriorityName ? 'dex' : info.smartTraitScore > 0 ? `trait=${info.smartTraitScore}` : info.priorityName ? 'list' : info.shiny ? 'shiny' : info.detectedTypes.length ? `type=${info.detectedTypes.join('/')}` : 'other'}`),
                     checked: infos.length,
                     targetCount,
                     shinyNames,
                     names,
-                    signature
+                    signature,
+                    startShinyGate
                 };
                 """,
                 immediate_only,
@@ -13041,6 +14140,7 @@ class PokeLikeBotGUI(ctk.CTk):
                 list(getattr(self, "current_dex_target_names", set()) or []),
                 self.current_dex_target_mode,
                 self.pokemon_filter_payload(),
+                list(POKEMON_TYPE_NAMES),
             )
 
         result = click_priority_choice(immediate_only=True)
@@ -13057,6 +14157,8 @@ class PokeLikeBotGUI(ctk.CTk):
 
         if result.get("clicked"):
             self.record_catch_scan(result, "full run")
+            if result.get("startShinyGate"):
+                self.start_shiny_filter_acquired = True
             if result.get("reason") == "legendary":
                 self.record_legendary_encounter(f"catch:{result.get('signature')}:{result.get('name')}")
             self.log(f"Catch screen: selected {result.get('name') or 'Pokemon'} by {result.get('reason')} priority.")
@@ -13064,11 +14166,18 @@ class PokeLikeBotGUI(ctk.CTk):
             return False
         if result.get("filteredOut"):
             self.record_catch_scan(result, "full run filtered")
-            self.restart_attempt = True
+            if result.get("startShinyGate"):
+                self.restart_attempt = True
+                self.log(
+                    "Start shiny filter missed after catch rerolls; restarting run. "
+                    f"Offered: {result.get('offered') or result.get('names') or 'unknown'}."
+                )
+                return False
             self.log(
-                "Catch screen: no Pokemon passed the active filters; restarting run. "
+                "Catch screen: no Pokemon passed the active filters; fleeing and continuing run. "
                 f"Offered: {result.get('offered') or result.get('names') or 'unknown'}."
             )
+            self.click_catch_skip_if_available()
             return False
         self.log("Catch screen had no clickable Pokemon choices.")
         return False
@@ -13123,6 +14232,9 @@ class PokeLikeBotGUI(ctk.CTk):
             time.sleep(0.5)
             return False
 
+        if screen == "elite-prep-screen" and self.handle_boss_combat_item_swap():
+            return False
+
         if screen in equip_screens and self.handle_regular_item_equip():
             return False
 
@@ -13146,6 +14258,9 @@ class PokeLikeBotGUI(ctk.CTk):
             self.record_leader_or_elite_if_visible("elite prep", include_map_info=True)
 
         if screen == "elite-prep-screen" and self.handle_final_fight_confirm():
+            return False
+
+        if screen in {"badge-screen", "item-screen", "map-screen"} and self.restore_boss_combat_item_if_needed():
             return False
 
         if screen in {"catch-screen", "shiny-screen", "swap-screen"} and self.handle_pokemon_reward_policy():
@@ -13183,6 +14298,8 @@ class PokeLikeBotGUI(ctk.CTk):
             "passive-screen",
             "elite-prep-screen",
         ]:
+            if self.use_sacred_ash_on_fainted_starter_if_available():
+                return False
             if self.use_rare_candy_on_starter_if_available():
                 return False
             if self.use_moon_stone_on_target_if_available():
@@ -13362,6 +14479,13 @@ class PokeLikeBotGUI(ctk.CTk):
     def handle_completed_run_result(self, won, screen):
         self.record_money_earned_if_visible()
         self.record_run_history_result(won, screen)
+        if getattr(self, "resumed_existing_challenge_run", False):
+            self.resumed_existing_challenge_run = False
+            if self.click_home_if_visible():
+                self.restart_attempt = True
+                self.log("Finished resumed Challenge run; returning Home to start the configured run.")
+                return False
+            raise RuntimeError("Finished resumed Challenge run, but Home was not available.")
         schedule_action = self.update_schedule_after_result(won, screen)
         if schedule_action == "done":
             return False
@@ -13446,6 +14570,7 @@ class PokeLikeBotGUI(ctk.CTk):
         self.awaiting_leader_item_roll = False
         self.restart_attempt = False
         self.catch_reroll_used = False
+        self.start_shiny_filter_acquired = False
         self.last_catch_scan_signature = None
         self.last_item_signature = None
         self.last_money_signature = None
