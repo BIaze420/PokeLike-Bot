@@ -12,6 +12,7 @@ datas = [
     ("assets/discord_logo.png", "assets"),
     ("assets/website_globe.png", "assets"),
     ("assets/github_logo.png", "assets"),
+    ("assets/type_badges", "assets/type_badges"),
 ]
 datas += collect_data_files("customtkinter")
 
@@ -50,7 +51,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
